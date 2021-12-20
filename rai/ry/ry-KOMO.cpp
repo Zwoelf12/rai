@@ -169,6 +169,21 @@ void init_KOMO(pybind11::module& m) {
     checkView(self);
   })
 
+  .def("initWithWaypoints", [](std::shared_ptr<KOMO>& self, const pybind11::list& listOfArrays
+         , int waypointStepsPerPhase , bool sineProfile ) {
+
+     namespace py = pybind11;
+     arrA waypoints;
+
+    for( auto xx: listOfArrays)
+    {
+      py::array_t<double> casted_array = py::cast<py::array>(xx);
+      arr q = numpy2arr(casted_array);
+      waypoints.append(q);
+    }
+
+      self->initWithWaypoints(waypoints, waypointStepsPerPhase,  sineProfile );
+  }, "input should be list of arrays (numpy array or Python list)" )
 //-- read out
 
   .def("getT", [](std::shared_ptr<KOMO>& self) {
