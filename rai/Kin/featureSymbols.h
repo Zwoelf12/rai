@@ -68,6 +68,14 @@ enum FeatureSymbol {
   FS_transVelocities,
 
   FS_qQuaternionNorms,
+
+  // new for welf
+  //
+
+  FS_fex_Force,
+  FS_qLimits,
+  FS_NewtonEuler
+
 };
 
 namespace rai {

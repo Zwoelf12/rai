@@ -138,6 +138,11 @@ ptr<Feature> symbols2feature(FeatureSymbol feat, const StringA& frames, const ra
   else if(feat==FS_vectorZDiff) {  f=make_shared<F_VectorDiff>(Vector_z, Vector_z); }
   else if(feat==FS_vectorZRel) {  f=make_shared<F_VectorRel>(Vector_z); }
 
+  // new for welf
+  else if(feat==FS_fex_Force) {  f=make_shared<F_fex_Force>(); }
+  else if(feat==FS_qLimits) {  f=make_shared<F_qLimits>(); }
+  else if(feat==FS_NewtonEuler) {  f=make_shared<F_NewtonEuler>(true); }
+
 
   else if(feat==FS_pairCollision_negScalar) {  f=make_shared<F_PairCollision>(F_PairCollision::_negScalar, false); }
   else if(feat==FS_pairCollision_vector) {     f=make_shared<F_PairCollision>(F_PairCollision::_vector, false); }

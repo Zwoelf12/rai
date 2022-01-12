@@ -66,6 +66,18 @@ void init_Config(pybind11::module& m) {
   pybind11::arg("args") = std::string()
       )
 
+  // example: parent = "world" ; child = "m1"
+  // Limitation: using rai::FXT_forceZ
+  .def("addForce", [] ( shared_ptr<rai::Configuration>& self,  const std::string& parent, const std::string& child, 
+      double lb , double ub , double force_to_torque )
+  {
+  rai::Configuration&C = *self;
+  rai::Frame *base = C[parent.c_str()];
+  auto f1 = new rai::ForceExchange(*base, *C[child.c_str()], rai::FXT_forceZ);
+  f1->limits = { lb, ub };
+  f1->force_to_torque =  force_to_torque;
+  })
+
   .def("addObject", [](shared_ptr<rai::Configuration>& self, const std::string& name, const std::string& parent,
                        rai::ShapeType shape,
                        const std::vector<double>& size,
@@ -651,6 +663,13 @@ allows you to control robot motors by position, velocity, or accelerations, \
 
   ENUMVAL(FS, transAccelerations)
   ENUMVAL(FS, transVelocities)
+
+  // new for welf
+
+  ENUMVAL(FS, fex_Force)
+  ENUMVAL(FS, qLimits)
+  ENUMVAL(FS, NewtonEuler)
+
   .export_values();
 
 #undef ENUMVAL

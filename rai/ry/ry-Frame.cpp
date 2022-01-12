@@ -110,6 +110,24 @@ void init_Frame(pybind11::module& m) {
     checkView(self);
   })
 
+
+  .def("setInertia", [](shared_ptr<rai::Frame>& self, 
+        std::vector<double> data /* row major */ ) {
+      CHECK_EQ(data.size(), 9, "data has 9 components, as vector (row major)");
+      auto& inertia = self->getInertia();
+      inertia.setZero();
+      inertia.matrix.m00 = data[0];
+      inertia.matrix.m01 = data[1];
+      inertia.matrix.m02 = data[2];
+      inertia.matrix.m10 = data[3];
+      inertia.matrix.m11 = data[4];
+      inertia.matrix.m12 = data[5];
+      inertia.matrix.m20 = data[6];
+      inertia.matrix.m21 = data[7];
+      inertia.matrix.m22 = data[8];
+  })
+
+
   .def("addAttribute", [](shared_ptr<rai::Frame>& self, const char* key, double value) {
     //WToken<rai::Configuration> token(*self.config, &self.config->data);
     self->addAttribute(key, value);
