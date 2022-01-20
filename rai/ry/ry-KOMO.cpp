@@ -71,7 +71,7 @@ void init_KOMO(pybind11::module& m) {
   .def("clearObjectives", &KOMO::clearObjectives)
 
 #if 0
-      .def("addObjective",
+  .def("addObjective",
        pybind11::overload_cast<const arr&, const FeatureSymbol&, const StringA&, ObjectiveType, const arr&, const arr&, int, int, int>
        (&KOMO::addObjective),
        "",
@@ -86,8 +86,8 @@ void init_KOMO(pybind11::module& m) {
        pybind11::arg("deltaToStep")=0
        )
 #else
-  .def("addObjective", [](std::shared_ptr<KOMO>& self, const arr& times, const FeatureSymbol& feature, const ry::I_StringA& frames, const ObjectiveType& type, const arr& scale, const arr& target, int order) {
-        self->addObjective(times, feature, I_conv(frames), type, scale, target, order);
+  .def("addObjective", [](std::shared_ptr<KOMO>& self, const arr& times, const FeatureSymbol& feature, const ry::I_StringA& frames, const ObjectiveType& type, const arr& scale, const arr& target, int order, int deltaFromStep, int deltaToStep ) {
+        self->addObjective(times, feature, I_conv(frames), type, scale, target, order, deltaFromStep, deltaToStep);
       }, "",
       pybind11::arg("times"),
       pybind11::arg("feature"),
@@ -95,7 +95,9 @@ void init_KOMO(pybind11::module& m) {
       pybind11::arg("type"),
       pybind11::arg("scale")=arr(),
       pybind11::arg("target")=arr(),
-      pybind11::arg("order")=-1)
+      pybind11::arg("order")=-1,
+      pybind11::arg("deltaFromStep")=0,
+       pybind11::arg("deltaToStep")=0)
 #endif
 
 //      .def("add_qControlObjective", [](std::shared_ptr<KOMO>& self, const std::vector<double>& time, uint order, double scale, const std::vector<double>& target) {
