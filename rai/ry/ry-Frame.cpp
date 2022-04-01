@@ -112,10 +112,12 @@ void init_Frame(pybind11::module& m) {
 
 
   .def("setInertia", [](shared_ptr<rai::Frame>& self, 
-        std::vector<double> data /* row major */ ) {
+        std::vector<double> data /* row major */, double mass ) {
       CHECK_EQ(data.size(), 9, "data has 9 components, as vector (row major)");
       auto& inertia = self->getInertia();
       inertia.setZero();
+      inertia.mass = mass;
+      inertia.matrix.setZero();
       inertia.matrix.m00 = data[0];
       inertia.matrix.m01 = data[1];
       inertia.matrix.m02 = data[2];
@@ -131,6 +133,12 @@ void init_Frame(pybind11::module& m) {
   .def("addAttribute", [](shared_ptr<rai::Frame>& self, const char* key, double value) {
     //WToken<rai::Configuration> token(*self.config, &self.config->data);
     self->addAttribute(key, value);
+  })
+
+ .def("getMass", [](shared_ptr<rai::Frame>& self) {
+    auto& inertia = self->getInertia();
+    double mass = inertia.mass;
+    return mass;
   })
 
   .def("getName", [](shared_ptr<rai::Frame>& self) {

@@ -83,7 +83,7 @@ void init_Config(pybind11::module& m) {
                        const std::vector<double>& size,
                        const std::vector<double>& color,
                        const std::vector<double>& pos,
-  const std::vector<double>& quat) {
+                       const std::vector<double>& quat) {
     rai::Frame *f = self->addFrame(name.c_str(), parent.c_str());
     if(f->parent) f->setJoint(rai::JT_rigid);
     f->setShape(shape, arr(size, true));
