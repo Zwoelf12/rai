@@ -565,8 +565,8 @@ void Configuration::setJointState(const arr& _q, const FrameL& F) {
   for(Frame* f:F) {
     Joint* j = f->joint;
     if(!j && !f->forces.N) HALT("frame '" <<f->name <<"' is not a joint and has no forces!");
+    if(!j) continue; // frame is not a joint, but has forces (they will be set below)
     if(!j->mimic) CHECK_LE(nd+j->dim,_q.N, "given q-vector too small");
-    if(!j) continue;
     if(j->active){
       if(!j->mimic){
         for(uint ii=0; ii<j->dim; ii++) q.elem(j->qIndex+ii) = _q(nd+ii);
