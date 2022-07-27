@@ -843,8 +843,8 @@ void SlalomProblem::fv_i(arr& y, arr& J, uint i, const arr& x_i) {
   y.resize(1);  y(0)=0.;
   if(!!J) { J.resize(1, 2);  J.setZero(); }
   if(!(i%(T/K))) {
-    uint obstacle=i/(T/K);
-    if(obstacle&1) { //top obstacle
+    uint Obstacle=i/(T/K);
+    if(Obstacle&1) { //top Obstacle
       double d=(x_i(0)-1.)/margin;
 //       y(0) = tannenbaum((J?&(*J)(0,0):nullptr), d, power);
       y(0) = border((!!J?&J(0, 0):nullptr), d, power);

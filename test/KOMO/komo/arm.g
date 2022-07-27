@@ -20,6 +20,6 @@ joint (arm6 arm7) { joint:hingeX A=<T t(0 0 0.2) d(45 0 0 1)> B=<T t(0 0 .2)>  Q
 
 body target { X=<T t(.7 -.5 1.2)>  shape:sphere size=[.1 .1 .1 .05] color=[0 .5 0] }
 
-body obstacle { X=<T t(1. -1.5 1.)>  shape:sphere size=[1. .1 5. .5] color=[1 0 0] contact, }
+body Obstacle { X=<T t(1. -1.5 1.)>  shape:sphere size=[1. .1 5. .5] color=[1 0 0] contact, }
 
 shape endeff(arm7){ shape:marker rel=<T t(0 0 .3)> size=[.1 .1 .1 0] } # a marker shape at the tip of arm7

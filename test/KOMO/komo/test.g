@@ -24,6 +24,6 @@ body target { X=<T t(1. -.5 1.)>  type=1 size=[.1 .1 .1 .05] color=[0 .5 0] fixe
 #body ball  { X=<T t(.0 -1.0 2.1)>  type=1 size=[.3 .3 .3 .1] color=[1 0 0] contact, fixed, }
 #body ball2 { X=<T t(.7 -1. 1.5)>  type=1 size=[.3 .3 .3 .1] color=[1 0 0] contact, fixed, }
 #body ball3 { X=<T t(-.22 -1.5 2.)>  type=1 size=[.3 .3 .3 .1] color=[1 0 0] contact, fixed, }
-body obstacle { X=<T t(1. -1.5 .8)>  type=1 size=[1. .1 5. .5] color=[1 0 0] contact, fixed, }
+body Obstacle { X=<T t(1. -1.5 .8)>  type=1 size=[1. .1 5. .5] color=[1 0 0] contact, fixed, }
 
 shape endeff(arm7){ type=5 rel=<T t(0 0 .3)> size=[.1 .1 .1 0] } # a marker shape at the tip of arm7
