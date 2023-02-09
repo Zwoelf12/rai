@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.4)
 
-project(RaiPython)
+project(RAI)
 
 set(CMAKE_CXX_STANDARD 14 CACHE STRING "C++ version selection")
 
@@ -25,33 +25,33 @@ add_definitions(
 ################################################################################
 
 include_directories(
-  rai/rai
+  rai
   /usr/include/eigen3
   $ENV{HOME}/opt/include
   )
 
-link_directories(
-  $ENV{HOME}/opt/lib
-  )
+# link_directories(
+#   $ENV{HOME}/opt/lib
+#   )
 
-file(GLOB SRC_Core rai/rai/Core/*.cpp)
-file(GLOB SRC_Optim rai/rai/Optim/*.cpp)
-file(GLOB SRC_Geo rai/rai/Geo/*.cpp)
-file(GLOB SRC_GeoGJK rai/rai/Geo/GJK/*.c)
-file(GLOB SRC_GeoPly rai/rai/Geo/ply/*.c)
-file(GLOB SRC_Algo rai/rai/Algo/*.cpp)
-file(GLOB SRC_Plot rai/rai/Plot/*.cpp)
-file(GLOB SRC_Gui rai/rai/Gui/*.cpp)
-file(GLOB SRC_Kin rai/rai/Kin/*.cpp)
-file(GLOB SRC_KinSwift rai/rai/Kin/SWIFT/*.cpp)
-file(GLOB SRC_KOMO rai/rai/KOMO/*.cpp)
-file(GLOB SRC_Logic rai/rai/Logic/*.cpp)
-file(GLOB SRC_LGP rai/rai/LGP/*.cpp)
-file(GLOB SRC_RosCom rai/rai/RosCom/*.cpp)
-file(GLOB SRC_Perception rai/rai/Perception/*.cpp)
-file(GLOB SRC_Control rai/rai/Control/*.cpp)
-file(GLOB SRC_Operate rai/rai/Operate/*.cpp)
-file(GLOB SRC_ry rai/rai/ry/*.cpp)
+file(GLOB SRC_Core rai/Core/*.cpp)
+file(GLOB SRC_Optim rai/Optim/*.cpp)
+file(GLOB SRC_Geo rai/Geo/*.cpp)
+file(GLOB SRC_GeoGJK rai/Geo/GJK/*.c)
+file(GLOB SRC_GeoPly rai/Geo/ply/*.c)
+file(GLOB SRC_Algo rai/Algo/*.cpp)
+file(GLOB SRC_Plot rai/Plot/*.cpp)
+file(GLOB SRC_Gui rai/Gui/*.cpp)
+file(GLOB SRC_Kin rai/Kin/*.cpp)
+file(GLOB SRC_KinSwift rai/Kin/SWIFT/*.cpp)
+file(GLOB SRC_KOMO rai/KOMO/*.cpp)
+file(GLOB SRC_Logic rai/Logic/*.cpp)
+file(GLOB SRC_LGP rai/LGP/*.cpp)
+file(GLOB SRC_RosCom rai/RosCom/*.cpp)
+file(GLOB SRC_Perception rai/Perception/*.cpp)
+file(GLOB SRC_Control rai/Control/*.cpp)
+file(GLOB SRC_Operate rai/Operate/*.cpp)
+file(GLOB SRC_ry rai/ry/*.cpp)
 
 add_library(rai SHARED
   ${SRC_Core}
@@ -75,7 +75,8 @@ add_library(rai SHARED
 
 target_link_libraries(rai
   jsoncpp lapack blas pthread rt X11
-  assimp fcl ann glfw GLEW glut GLU GL png qhull
+  assimp /usr/lib/x86_64-linux-gnu/libfcl.so
+  ann glfw GLEW glut GLU GL png qhull
   )
 
 ################################################################################
@@ -123,8 +124,8 @@ endif()
 
 ################################################################################
 
-#add_executable(kinEdit rai/bin/src_kinEdit/main.cpp)
-#target_link_libraries(kinEdit rai)
+# add_executable(kinEdit rai/bin/src_kinEdit/main.cpp)
+# target_link_libraries(kinEdit rai)
 
-#add_executable(cppQuadcopterExample cpp/cppQuadcopterExample.cpp)
-#target_link_libraries(cppQuadcopterExample rai)
+# add_executable(cppQuadcopterExample cpp/cppQuadcopterExample.cpp)
+# target_link_libraries(cppQuadcopterExample rai)
