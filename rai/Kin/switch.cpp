@@ -9,6 +9,7 @@
 #include "switch.h"
 #include "kin.h"
 #include "forceExchange.h"
+
 #include <climits>
 
 //===========================================================================
@@ -34,19 +35,19 @@ void conv_times2steps(int& fromStep, int& toStep, const arr& times, int stepsPer
     toTime = times(1);
   }
 
-  if(toTime>double(T)/stepsPerPhase+1.) {
+  if(toTime>double(T)/stepsPerPhase+1. && toTime<1e6) {
     LOG(-1) <<"beyond the time!: endTime=" <<toTime <<" phases=" <<double(T)/stepsPerPhase;
   }
 
   CHECK_GE(stepsPerPhase, 0, "");
 
   //convert to steps
-  fromStep = (fromTime<0.?0:conv_time2step(fromTime, stepsPerPhase));
+  fromStep = (fromTime<0.?T-1:conv_time2step(fromTime, stepsPerPhase));
   toStep   = (toTime<0.?T-1:conv_time2step(toTime, stepsPerPhase));
 
   //account for deltas
-  if(fromTime>=0 && deltaFromStep) fromStep+=deltaFromStep;
-  if(toTime>=0 && deltaToStep) toStep+=deltaToStep;
+  if(deltaFromStep) fromStep+=deltaFromStep;
+  if(deltaToStep) toStep+=deltaToStep;
 
   //clip
   if(fromStep<0) fromStep=0;
@@ -55,6 +56,13 @@ void conv_times2steps(int& fromStep, int& toStep, const arr& times, int stepsPer
 
 intA conv_times2tuples(const arr& times, uint order, int stepsPerPhase, uint T,
                        int deltaFromStep, int deltaToStep){
+
+  if(times.N && times.elem(0)==-10.){
+    intA configs (times.N-1);
+    for(uint i=0;i<configs.N;i++) configs(i) = times(i+1);
+    configs.reshape(-1, order+1);
+    return configs;
+  }
 
   int fromStep, toStep;
   conv_times2steps(fromStep, toStep, times, stepsPerPhase, T, deltaFromStep, deltaToStep);
@@ -131,14 +139,14 @@ void rai::KinematicSwitch::setTimeOfApplication(const arr& times, bool before, i
   }
 }
 
-rai::Frame* rai::KinematicSwitch::apply(FrameL& frames) {
+rai::Frame* rai::KinematicSwitch::apply(FrameL& frames) const {
   Frame* from=nullptr, *to=nullptr;
   if(fromId!=-1) from=frames(fromId);
   if(toId!=-1) to=frames(toId);
 
   CHECK(from!=to, "not allowed to link '" <<from->name <<"' to itself");
 
-  if(symbol==SW_joint || symbol==SW_joint) {
+  if(symbol==SW_joint) {
     Transformation orgX = to->ensure_X();
 
     //first find link frame above 'to', and make it a root
@@ -151,13 +159,22 @@ rai::Frame* rai::KinematicSwitch::apply(FrameL& frames) {
     if(to->parent) to->unLink();
 #endif
 
+    if(!jB.isZero()) {
+      Frame *newto = new Frame(to->C);
+      newto->name <<'<' <<to->name;
+      to->setParent(newto, false);
+      to->set_Q() = jB;
+      to=newto;
+      orgX = orgX * (-jB);
+    }
+
     //create a new joint
     to->setParent(from, false, true); //checkForLoop might throw an error
     to->setJoint(jointType);
     CHECK(jointType!=JT_none, "");
 
     if(!jA.isZero()) to->insertPreLink(jA);
-    if(!jB.isZero()) { HALT("only to be careful: does the orgX still work?"); to->insertPostLink(jB); }
+    //if(!jB.isZero()) { to->insertPostLink(jB); orgX = orgX * (-jB); }
 
     //initialize to zero, copy, or random
     if(init==SWInit_zero) { //initialize the joint with zero transform
@@ -170,7 +187,7 @@ rai::Frame* rai::KinematicSwitch::apply(FrameL& frames) {
         to->Q.setZero();
         to->joint->setDofs(q, 0);
       }
-    } if(init==SWInit_random) { //random, modulo DOFs
+    } else if(init==SWInit_random) { //random, modulo DOFs
       to->Q.setRandom();
       if(to->joint->dim>0) {
         arr q = to->joint->calcDofsFromConfig();
@@ -179,6 +196,8 @@ rai::Frame* rai::KinematicSwitch::apply(FrameL& frames) {
       }
     }
     to->_state_updateAfterTouchingQ();
+
+    to->joint->isStable = isStable;
 
     //K.reset_q();
     //K.calc_q(); K.checkConsistency();
@@ -189,7 +208,7 @@ rai::Frame* rai::KinematicSwitch::apply(FrameL& frames) {
     return to;
   }
 
-  if(symbol==SW_noJointLink) {
+  else if(symbol==SW_noJointLink) {
     CHECK_EQ(jointType, JT_none, "");
 
     if(to->parent) to->unLink();
@@ -197,7 +216,7 @@ rai::Frame* rai::KinematicSwitch::apply(FrameL& frames) {
     return to;
   }
 
-  if(symbol==makeDynamic) {
+  else if(symbol==makeDynamic) {
     CHECK_EQ(jointType, JT_none, "");
     CHECK_EQ(to, 0, "");
     CHECK(from->inertia, "can only make frames with intertia dynamic");
@@ -209,7 +228,7 @@ rai::Frame* rai::KinematicSwitch::apply(FrameL& frames) {
     return from;
   }
 
-  if(symbol==makeKinematic) {
+  else if(symbol==makeKinematic) {
     CHECK_EQ(jointType, JT_none, "");
     CHECK_EQ(to, 0, "");
     CHECK(from->inertia, "can only make frames with intertia kinematic");
@@ -222,19 +241,19 @@ rai::Frame* rai::KinematicSwitch::apply(FrameL& frames) {
     return from;
   }
 
-  if(symbol==SW_addContact) {
+  else if(symbol==SW_addContact) {
     CHECK_EQ(jointType, JT_none, "");
     new ForceExchange(*from, *to, FXT_poa);
     return from;
   }
 
-  if(symbol==SW_addPOAonly) {
+  else if(symbol==SW_addPOAonly) {
     CHECK_EQ(jointType, JT_none, "");
     new ForceExchange(*from, *to, FXT_poaOnly);
     return from;
   }
 
-  if(symbol==SW_delContact) {
+  else if(symbol==SW_delContact) {
     CHECK_EQ(jointType, JT_none, "");
     ForceExchange* c = nullptr;
     for(ForceExchange* cc:to->forces) if(&cc->a==from || &cc->b==from) { c=cc; break; }

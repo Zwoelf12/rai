@@ -13,6 +13,8 @@
 #include "../Optim/newton.h"
 
 #include <limits>
+#include <algorithm>
+#include <math.h>
 
 #ifdef RAI_PLY
 #  include "ply/ply.h"
@@ -30,7 +32,7 @@ extern void glColorId(uint id);
 //==============================================================================
 
 template<> const char* rai::Enum<rai::ShapeType>::names []= {
-  "box", "sphere", "capsule", "mesh", "cylinder", "marker", "pointCloud", "ssCvx", "ssBox", "ssCylinder", "ssBoxElip", nullptr
+  "box", "sphere", "capsule", "mesh", "cylinder", "marker", "pointCloud", "ssCvx", "ssBox", "ssCylinder", "ssBoxElip", "quad", "camera", "sdf", nullptr
 };
 
 //==============================================================================
@@ -50,7 +52,7 @@ void rai::Mesh::clear() {
   graph.clear();
 }
 
-void rai::Mesh::setBox() {
+void rai::Mesh::setBox(bool edgesOnly) {
   clear();
   double verts[24] = {
     -.5, -.5, -.5,
@@ -70,10 +72,21 @@ void rai::Mesh::setBox() {
     2, 6, 5, 5, 1, 2,
     0, 4, 7, 7, 3, 0
   };
+  uint edges[24] = {
+    0, 1, 1, 2, 2, 3, 3, 0,
+    4, 5, 5, 6, 6, 7, 7, 4,
+    0, 4, 1, 5, 2, 6, 3, 7
+  };
+
   V.setCarray(verts, 24);
-  T.setCarray(tris, 36);
   V.reshape(8, 3);
-  T.reshape(12, 3);
+  if(!edgesOnly) {
+    T.setCarray(tris, 36);
+    T.reshape(12, 3);
+  }else{
+    T.setCarray(edges, 24);
+    T.reshape(12, 2);
+  }
   Vn.clear(); Tn.clear();
   graph.clear();
   //cout <<V <<endl;  for(uint i=0;i<4;i++) cout <<length(V[i]) <<endl;
@@ -89,6 +102,27 @@ void rai::Mesh::setLine(double l) {
   V.resize(2, 3).setZero();
   V(0, 2) = -.5*l;
   V(1, 2) = +.5*l;
+}
+
+void rai::Mesh::setQuad(double x_width, double y_width, const byteA& _texImg){
+  clear();
+  V = {
+    -.5*x_width, -.5*y_width, 0,
+    +.5*x_width, -.5*y_width, 0,
+    +.5*x_width, +.5*y_width, 0,
+    -.5*x_width, +.5*y_width, 0  };
+  T = {
+    0, 1, 2, 2, 3, 0
+  };
+  V.reshape(4,3);
+  T.reshape(2,3);
+  if(_texImg.N){
+    texImg = _texImg;
+//    C = {1.,1.,1.}; //bright color
+    Tt = T;
+    tex = {0.,1.,  1.,1.,  1.,0.,  0.,0.};
+    tex.reshape(V.d0, 2);
+  }
 }
 
 void rai::Mesh::setTetrahedron() {
@@ -167,7 +201,7 @@ void rai::Mesh::setSphere(uint fineness) {
 //  setTetrahedron();
   for(uint k=0; k<fineness; k++) {
     subDivide();
-    for(uint i=0; i<V.d0; i++) V[i]() /= length(V[i]);
+    for(uint i=0; i<V.d0; i++) V[i] /= length(V[i]);
   }
   makeConvexHull();
 }
@@ -178,7 +212,7 @@ void rai::Mesh::setHalfSphere(uint fineness) {
   T.resizeCopy(4, 3);
   for(uint k=0; k<fineness; k++) {
     subDivide();
-    for(uint i=0; i<V.d0; i++) V[i]() /= length(V[i]);
+    for(uint i=0; i<V.d0; i++) V[i] /= length(V[i]);
   }
   makeConvexHull();
 }
@@ -276,9 +310,9 @@ void rai::Mesh::subDivide() {
   uint a, b, c, i, k, l;
   for(i=0, k=v, l=0; i<t; i++) {
     a=T(i, 0); b=T(i, 1); c=T(i, 2);
-    V[k+0]() = (double).5*(V[a] + V[b]);
-    V[k+1]() = (double).5*(V[b] + V[c]);
-    V[k+2]() = (double).5*(V[c] + V[a]);
+    V[k+0] = (double).5*(V[a] + V[b]);
+    V[k+1] = (double).5*(V[b] + V[c]);
+    V[k+2] = (double).5*(V[c] + V[a]);
     newT(l, 0)=a;   newT(l, 1)=k+0; newT(l, 2)=k+2; l++;
     newT(l, 0)=k+0; newT(l, 1)=b;   newT(l, 2)=k+1; l++;
     newT(l, 0)=k+0; newT(l, 1)=k+1; newT(l, 2)=k+2; l++;
@@ -295,9 +329,9 @@ void rai::Mesh::subDivide(uint i) {
   T.resizeCopy(t+3, 3);
   uint a, b, c;
   a=T(i, 0); b=T(i, 1); c=T(i, 2);
-  V[v+0]() = (double).5*(V[a] + V[b]);
-  V[v+1]() = (double).5*(V[b] + V[c]);
-  V[v+2]() = (double).5*(V[c] + V[a]);
+  V[v+0] = (double).5*(V[a] + V[b]);
+  V[v+1] = (double).5*(V[b] + V[c]);
+  V[v+2] = (double).5*(V[c] + V[a]);
   T(i, 0)=a;   T(i, 1)=v+0; T(i, 2)=v+2; //the old ith tri becomes one of the 4 new ones
   T(t, 0)=v+0; T(t, 1)=b;   T(t, 2)=v+1; t++;
   T(t, 0)=v+0; T(t, 1)=v+1; T(t, 2)=v+2; t++;
@@ -327,7 +361,7 @@ void rai::Mesh::transform(const rai::Transformation& t) {
 
 rai::Vector rai::Mesh::center() {
   arr Vmean = mean(V);
-  for(uint i=0; i<V.d0; i++) V[i]() -= Vmean;
+  for(uint i=0; i<V.d0; i++) V[i] -= Vmean;
   return Vector(Vmean);
 }
 
@@ -365,7 +399,7 @@ void rai::Mesh::addMesh(const Mesh& mesh2, const rai::Transformation& X) {
     Tt.append(consts<uint>(0, mesh2.T.d0, 3));
   }
   if(!X.isZero()) {
-    X.applyOnPointArray(V({n, -1})());
+    X.applyOnPointArray(V({n, -1}).noconst());
   }
   if(mesh2.texImg.N){
 //    CHECK(!texImg.N, "can't append texture images");
@@ -410,17 +444,17 @@ void rai::Mesh::makeConvexHull() {
 void rai::Mesh::makeTriangleFan() {
   T.clear();
   for(uint i=1; i+1<V.d0; i++) {
-    T.append(TUP(0, i, i+1));
-    T.append(TUP(0, i+1, i));
+    T.append(uintA{0, i, i+1});
+    T.append(uintA{0, i+1, i});
   }
   T.reshape(T.N/3, 3);
 }
 
 void rai::Mesh::makeLineStrip() {
-  T.resize(V.d0, 2);
-  T[0] = {V.d0-1, 0};
+  T.resize(V.d0-1, 2);
+//  T[0] = {V.d0-1, 0};
   for(uint i=1; i<V.d0; i++) {
-    T[i] = {i-1, i};
+    T[i-1] = {i-1, i};
   }
 }
 
@@ -485,7 +519,7 @@ void rai::Mesh::computeNormals() {
     Vn(t[2], 0)+=a.x;  Vn(t[2], 1)+=a.y;  Vn(t[2], 2)+=a.z;
   }
   Vector d;
-  for(uint i=0; i<Vn.d0; i++) { d.set(&Vn(i, 0)); Vn[i]()/=d.length(); }
+  for(uint i=0; i<Vn.d0; i++) { d.set(&Vn(i, 0)); Vn[i]/=d.length(); }
 }
 
 arr rai::Mesh::computeTriDistances() {
@@ -775,7 +809,7 @@ void rai::Mesh::clean() {
       if(r==2) { A=T(i, 2);  B=T(i, 0);  /*C=T(i, 1);*/ }
 
       //check all triangles that share A & B
-      setSection(neighbors, VT[A], VT[B]);
+      neighbors = rai::setSection(VT[A], VT[B]);
       neighbors.removeAllValues(-1);
       if(neighbors.N>2) RAI_MSG("edge shared by more than 2 triangles " <<neighbors);
       neighbors.removeValue(i);
@@ -995,7 +1029,7 @@ arr rai::Mesh::getBox() const {
     a = elemWiseMin(a, V[i]);
     b = elemWiseMax(b, V[i]);
   }
-  return cat(a, b).reshape(2, 3);
+  return (a, b).reshape(2, 3);
 }
 
 double rai::Mesh::getRadius() const {
@@ -1089,6 +1123,7 @@ void rai::Mesh::readFile(const char* filename) {
 
 void rai::Mesh::read(std::istream& is, const char* fileExtension, const char* filename) {
   if(!strcmp(fileExtension, "arr")) { readArr(is); }
+  else if(!strcmp(fileExtension, "msh")) { readArr(is); }
   else if(!strcmp(fileExtension, "off")) { readOffFile(is); }
   else if(!strcmp(fileExtension, "ply")) { readPLY(filename); }
   else if(!strcmp(fileExtension, "tri")) { readTriFile(is); }
@@ -1374,8 +1409,7 @@ uintA getSubMeshPositions(const char* filename) {
   FILE* file;
   char buf[128];
   file = fopen(filename, "r");
-  CHECK(file,
-        "can't open data file " << filename << "; cwd is " << getcwd_string());
+  CHECK(file, "can't open data file " <<filename << "; cwd is " <<rai::getcwd_string());
 
   int flag = 0;
   long start_pos = 0;
@@ -1387,7 +1421,7 @@ uintA getSubMeshPositions(const char* filename) {
       case 'v': {
         if(flag > 0) {
           end_pos = ftell(file) - 1;
-          result.append(TUP((uint)start_pos, (uint)end_pos));
+          result.append(uintA{(uint)start_pos, (uint)end_pos});
           start_pos = end_pos;
           flag =0;
         }
@@ -1399,7 +1433,7 @@ uintA getSubMeshPositions(const char* filename) {
   }
 
   end_pos = ftell(file) - 1;
-  result.append(TUP((uint)start_pos, (uint)end_pos));
+  result.append(uintA{(uint)start_pos, (uint)end_pos});
   result.reshape(result.N/2, 2);
   return result;
 }
@@ -1412,10 +1446,19 @@ extern void glColor(float r, float g, float b, float alpha);
 void rai::Mesh::glDraw(struct OpenGL& gl) {
   if(glDrawOptions(gl).drawColors) {
     if(C.nd==1) {
-      CHECK(C.N==3 || C.N==4, "need a basic color");
+      CHECK(C.N>=1 && C.N<=4, "need a basic color");
       GLboolean light=true;
       glGetBooleanv(GL_LIGHTING, &light);
-      GLfloat col[4] = { (float)C(0), (float)C(1), (float)C(2), (C.N==3?1.f:(float)C(3)) };
+      GLfloat col[4];
+      if(C.N>=3){
+        col[0] = C.elem(0);
+        col[1] = C.elem(1);
+        col[2] = C.elem(2);
+        col[3] = (C.N==4?C.elem(3):1.);
+      }else{
+        col[0] = col[1] = col[2] = C.elem(0);
+        col[3] = (C.N==2?C.elem(1):1.);
+      }
       glColor4fv(col);
       if(light) glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, col);
     }
@@ -1495,19 +1538,19 @@ void rai::Mesh::glDraw(struct OpenGL& gl) {
     //  glShadeModel(GL_FLAT);
     glShadeModel(GL_SMOOTH);
     glEnableClientState(GL_VERTEX_ARRAY);
+    glEnableClientState(GL_NORMAL_ARRAY);
     if(glDrawOptions(gl).drawColors) {
       if(tex.N) CHECK_EQ(tex.d0, V.d0, "this needs tex coords for each vertex; if you have it face wise, render the slow way..");
       if(tex.N) glEnable(GL_TEXTURE_2D);
 
-      glEnableClientState(GL_NORMAL_ARRAY);
       if(C.N==V.N) glEnableClientState(GL_COLOR_ARRAY); else glDisableClientState(GL_COLOR_ARRAY);
       if(C.N==V.N) glDisable(GL_LIGHTING); //because lighting requires ambiance colors to be set..., not just color..
       if(tex.N) glEnableClientState(GL_TEXTURE_COORD_ARRAY); else glDisableClientState(GL_TEXTURE_COORD_ARRAY);
     }
 
     glVertexPointer(3, GL_DOUBLE, 0, V.p);
+    glNormalPointer(GL_DOUBLE, 0, Vn.p);
     if(glDrawOptions(gl).drawColors) {
-      glNormalPointer(GL_DOUBLE, 0, Vn.p);
       if(C.N==V.N) glColorPointer(3, GL_DOUBLE, 0, C.p);
       if(tex.N) glTexCoordPointer(2, GL_DOUBLE, 0, tex.p);
     }
@@ -1553,9 +1596,9 @@ void rai::Mesh::glDraw(struct OpenGL& gl) {
         if(C.d1==3) glColor(C(i, 0), C(i, 1), C(i, 2), 1.);
         if(C.d1==1) glColorId(C(i, 0));
       }
-      v=T(i, 0);  glNormal3dv(&Vn(v, 0));  if(C.d0==V.d0) glColor3dv(&C(v, 0));  if(Tt.N) glTexCoord2dv(&tex(Tt(i, 0), 0));  glVertex3dv(&V(v, 0));
-      v=T(i, 1);  glNormal3dv(&Vn(v, 0));  if(C.d0==V.d0) glColor3dv(&C(v, 0));  if(Tt.N) glTexCoord2dv(&tex(Tt(i, 1), 0));  glVertex3dv(&V(v, 0));
-      v=T(i, 2);  glNormal3dv(&Vn(v, 0));  if(C.d0==V.d0) glColor3dv(&C(v, 0));  if(Tt.N) glTexCoord2dv(&tex(Tt(i, 2), 0));  glVertex3dv(&V(v, 0));
+      v=T(i, 0);  glNormal3dv(&Vn(v, 0));  if(C.nd==2 && C.d0==V.d0) glColor3dv(&C(v, 0));  if(Tt.N) glTexCoord2dv(&tex(Tt(i, 0), 0));  glVertex3dv(&V(v, 0));
+      v=T(i, 1);  glNormal3dv(&Vn(v, 0));  if(C.nd==2 && C.d0==V.d0) glColor3dv(&C(v, 0));  if(Tt.N) glTexCoord2dv(&tex(Tt(i, 1), 0));  glVertex3dv(&V(v, 0));
+      v=T(i, 2);  glNormal3dv(&Vn(v, 0));  if(C.nd==2 && C.d0==V.d0) glColor3dv(&C(v, 0));  if(Tt.N) glTexCoord2dv(&tex(Tt(i, 2), 0));  glVertex3dv(&V(v, 0));
     }
     glEnd();
     if(Tt.N && texImg.N && glDrawOptions(gl).drawColors) {
@@ -1796,7 +1839,7 @@ void rai::Mesh::setImplicitSurface(ScalarFunction f, double xLo, double xHi, dou
       y = yLo+j*(yHi-yLo)/res;
       for(i=0; i<res; i++) {
         x = xLo+i*(xHi-xLo)/res;
-        mc.set_data(f(NoArr, NoArr, ARR((double)x, (double)y, (double)z)), i, j, k) ;
+        mc.set_data(f(NoArr, NoArr, arr{(double)x, (double)y, (double)z}), i, j, k) ;
       }
     }
   }
@@ -1818,6 +1861,12 @@ void rai::Mesh::setImplicitSurface(ScalarFunction f, double xLo, double xHi, dou
     T(i, 1)=mc.trig(i)->v2;
     T(i, 2)=mc.trig(i)->v3;
   }
+}
+
+void rai::Mesh::setImplicitSurface(const floatA& gridValues, const arr& lo, const arr& hi){
+  arr D;
+  copy(D,gridValues);
+  setImplicitSurface(D, lo, hi);
 }
 
 void rai::Mesh::setImplicitSurface(const arr& gridValues, const arr& lo, const arr& hi){
@@ -1854,9 +1903,8 @@ void rai::Mesh::setImplicitSurface(const arr& gridValues, const arr& lo, const a
 }
 
 #else //Lewiner
-void rai::Mesh::setImplicitSurface(ScalarFunction f, double lo, double hi, uint res) {
-  NICO
-}
+void rai::Mesh::setImplicitSurface(ScalarFunction f, double lo, double hi, uint res) {  NICO  }
+void rai::Mesh::setImplicitSurface(const floatA& gridValues, const arr& lo, const arr& hi) { NICO }
 #endif
 
 void rai::Mesh::setImplicitSurfaceBySphereProjection(ScalarFunction f, double rad, uint fineness){

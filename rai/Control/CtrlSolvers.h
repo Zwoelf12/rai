@@ -9,7 +9,7 @@
 #pragma once
 
 #include "CtrlObjective.h"
-#include "../Optim/MathematicalProgram.h"
+#include "../Optim/NLP.h"
 
 //===========================================================================
 
@@ -25,7 +25,7 @@ struct TaskControlMethods {
 
   TaskControlMethods(const arr& _Hmetric);
 
-  CtrlObjective* addPDTask(CtrlObjectiveL& tasks, const char* name, double decayTime, double dampingRatio, ptr<Feature> map);
+  CtrlObjective* addPDTask(CtrlObjectiveL& tasks, const char* name, double decayTime, double dampingRatio, shared_ptr<Feature> map);
 
 //  void updateCtrlObjectives(double tau, const rai::Configuration& world);
 //  void resetCtrlObjectivesState();
@@ -46,14 +46,14 @@ struct TaskControlMethods {
 
 //===========================================================================
 
-struct CtrlProblem_MathematicalProgram : MathematicalProgram {
+struct CtrlProblem_NLP : NLP {
   CtrlSolver& CP;
   ConfigurationL Ctuple;
   uint dimPhi=0;
   arr store_phi;
   arr store_J;
 
-  CtrlProblem_MathematicalProgram(CtrlSolver& _CP);
+  CtrlProblem_NLP(CtrlSolver& _CP);
 
   virtual uint getDimension();
   virtual void getBounds(arr& bounds_lo, arr& bounds_up);

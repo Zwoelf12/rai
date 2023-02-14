@@ -7,9 +7,13 @@
     --------------------------------------------------------------  */
 
 #include "geo.h"
+
 #include "../Core/array.h"
+#include "../Core/util.h"
 
 #include <algorithm>
+#include <math.h>
+
 #ifdef RAI_GL
 #  include <GL/glu.h>
 #endif
@@ -141,8 +145,8 @@ Vector Vector::getNormalVectorNormalToThis() const {
   if(isZero) {
     RAI_MSG("every vector is normal to a zero vector");
   }
-  arr s = ARR(fabs(x), fabs(y), fabs(z));
-  uint c = s.argmax();
+  arr s = arr{fabs(x), fabs(y), fabs(z)};
+  uint c = argmax(s);
   double xv, yv, zv;
   if(c == 0) {
     xv = -(y+z)/x;
@@ -183,13 +187,11 @@ arr Vector::generateOrthonormalSystemMatrix() const {
 
 //{ I/O
 void Vector::write(std::ostream& os) const {
-  if(!rai::IOraw) os <<'[' <<x <<", " <<y <<", " <<z <<']';
-  else os <<' ' <<x <<", " <<y <<' ' <<z;
+  os <<'[' <<x <<", " <<y <<", " <<z <<']';
 }
 
 void Vector::read(std::istream& is) {
-  if(!rai::IOraw) is >>PARSE("(") >>x >>y >>z >>PARSE(")");
-  else is >>x >>y >>z;
+  is >>PARSE("[") >>x >>y >>z >>PARSE("]");
 }
 //}
 
@@ -341,6 +343,14 @@ void Matrix::setRandom(double range) {
 void Matrix::setId() {
   m00=m11=m22=1.;
   m01=m02=m10=m12=m20=m21=0.;
+}
+
+void Matrix::setDiag(const arr& diag){
+  CHECK_EQ(diag.N, 3, "");
+  setZero();
+  m00=diag.elem(0);
+  m11=diag.elem(1);
+  m22=diag.elem(2);
 }
 
 /// set the matrix
@@ -519,11 +529,12 @@ void Quaternion::alignWith(const Vector& v) {
   normalize();
 }
 
-void Quaternion::addX(double angle) {
-  if(!angle) { return; }
-  angle/=2.;
-  double cw=cos(angle);
-  double cx=sin(angle);
+void Quaternion::addX(double radians) {
+  if(isZero){ setRadX(radians); return; }
+  if(!radians) { return; }
+  radians/=2.;
+  double cw=cos(radians);
+  double cx=sin(radians);
 
   Quaternion a;
   a.w = w*cw - x*cx;
@@ -534,11 +545,12 @@ void Quaternion::addX(double angle) {
   set(a.w, a.x, a.y, a.z);
 }
 
-void Quaternion::addY(double angle) {
-  if(!angle) { return; }
-  angle/=2.;
-  double cw=cos(angle);
-  double cy=sin(angle);
+void Quaternion::addY(double radians) {
+  if(isZero){ setRadY(radians); return; }
+  if(!radians) { return; }
+  radians/=2.;
+  double cw=cos(radians);
+  double cy=sin(radians);
 
   Quaternion a;
   a.w = w*cw - y*cy;
@@ -550,6 +562,7 @@ void Quaternion::addY(double angle) {
 }
 
 Quaternion& Quaternion::addZ(double radians) {
+  if(isZero){ setRadZ(radians); return *this; }
   if(!radians) { return *this; }
   radians/=2.;
   double cw=cos(radians);
@@ -672,31 +685,31 @@ void Quaternion::setRad(double angle) {
 }
 
 /// rotation around X-axis by given radiants
-void Quaternion::setRadX(double angle) {
-  if(!angle) { setZero(); return; }
-  angle/=2.;
-  w=cos(angle);
-  x=sin(angle);
+void Quaternion::setRadX(double radians) {
+  if(!radians) { setZero(); return; }
+  radians/=2.;
+  w=cos(radians);
+  x=sin(radians);
   y=z=0.;
   isZero=false;
 }
 
 /// rotation around Y-axis by given radiants
-void Quaternion::setRadY(double angle) {
-  if(!angle) { setZero(); return; }
-  angle/=2.;
-  w=cos(angle);
-  y=sin(angle);
+void Quaternion::setRadY(double radians) {
+  if(!radians) { setZero(); return; }
+  radians/=2.;
+  w=cos(radians);
+  y=sin(radians);
   x=z=0.;
   isZero=false;
 }
 
 /// rotation around Z-axis by given radiants
-void Quaternion::setRadZ(double angle) {
-  if(!angle) { setZero(); return; }
-  angle/=2.;
-  w=cos(angle);
-  z=sin(angle);
+void Quaternion::setRadZ(double radians) {
+  if(!radians) { setZero(); return; }
+  radians/=2.;
+  w=cos(radians);
+  z=sin(radians);
   x=y=0.;
   isZero=false;
 }
@@ -917,30 +930,30 @@ double* Quaternion::getMatrixGL(double* m) const {
   return m;
 }
 
-arr Quaternion::getEulerRPY() const {
-  double roll, pitch, yaw;
-
-  // roll (x-axis rotation)
+double Quaternion::getRoll_X() const {
   double sinr = +2.0 * (w * x + y * z);
   double cosr = +1.0 - 2.0 * (x * x + y * y);
-  roll = atan2(sinr, cosr);
-
-  // pitch (y-axis rotation)
-  double sinp = +2.0 * (w * y - z * x);
-  if(fabs(sinp) >= 1)
-    pitch = copysign(RAI_PI / 2, sinp); // use 90 degrees if out of range
-  else
-    pitch = asin(sinp);
-
-  // yaw (z-axis rotation)
-  double siny = +2.0 * (w * z + x * y);
-  double cosy = +1.0 - 2.0 * (y * y + z * z);
-  yaw = atan2(siny, cosy);
-
-  return {roll, pitch, yaw};
+  return atan2(sinr, cosr);
 }
 
-void Quaternion::applyOnPointArray(arr& pts) {
+double Quaternion::getPitch_Y() const {
+  double sinp = +2.0 * (w * y - z * x);
+  if(fabs(sinp) >= 1)
+    return copysign(RAI_PI / 2, sinp); // use 90 degrees if out of range
+  return asin(sinp);
+}
+
+double Quaternion::getYaw_Z() const {
+  double siny = +2.0 * (w * z + x * y);
+  double cosy = +1.0 - 2.0 * (y * y + z * z);
+  return atan2(siny, cosy);
+}
+
+arr Quaternion::getEulerRPY() const {
+  return {getRoll_X(), getPitch_Y(), getYaw_Z()};
+}
+
+void Quaternion::applyOnPointArray(arr& pts) const {
   arr R = ~getArr(); //transposed, to make it applicable to an n-times-3 array
   pts = pts * R;
 }
@@ -1002,10 +1015,12 @@ arr Quaternion::getQuaternionMultiplicationMatrix() const{
 
 void Quaternion::writeNice(std::ostream& os) const { os <<"Quaternion: " <<getDeg() <<" around " <<getVec() <<"\n"; }
 void Quaternion::write(std::ostream& os) const {
-  if(!rai::IOraw) os <<'[' <<w <<", " <<x <<", " <<y <<", " <<z <<']';
-  else os <<' ' <<w <<' ' <<x <<' ' <<y <<' ' <<z;
+  os <<'[' <<w <<", " <<x <<", " <<y <<", " <<z <<']';
 }
-void Quaternion::read(std::istream& is) { is >>PARSE("(") >>w >>x >>y  >>z >>PARSE(")"); normalize();}
+void Quaternion::read(std::istream& is) {
+  is >>PARSE("[") >>w >>x >>y  >>z >>PARSE("]");
+  normalize();
+}
 //}
 
 /// inverse rotation
@@ -1038,6 +1053,7 @@ Quaternion operator*(const Quaternion& b, const Quaternion& c) {
 
 /// A=B*C^{-1}
 Quaternion operator/(const Quaternion& b, const Quaternion& c) {
+  // same as b * (-c), where c is just inverted (c.w \gets - c.w)
   Quaternion a;
   a.w =-b.w*c.w - b.x*c.x - b.y*c.y - b.z*c.z;
   a.x = b.w*c.x - b.x*c.w + b.y*c.z - b.z*c.y;
@@ -1095,7 +1111,7 @@ Vector operator*(const Quaternion& b, const Vector& c) {
 }
 
 /// inverse transform of a vector by a rotation
-Vector operator/(const Quaternion& b, const Vector& c) {
+Vector operator/(const Vector& c, const Quaternion& b) {
   Matrix M = b.getMatrix();
   Vector a;
   a.x = M.m00*c.x + M.m10*c.y + M.m20*c.z;
@@ -1117,9 +1133,10 @@ Transformation operator*(const Transformation& X, const Transformation& c) {
   return f;
 }
 
-Transformation operator/(const Transformation& X, const Transformation& c) {
+Transformation operator/(const Transformation& to, const Transformation& from) {
+  // same as (-from) * to
   Transformation f;
-  f.setDifference(c, X);
+  f.setDifference(from, to);
   return f;
 }
 
@@ -1132,10 +1149,10 @@ Vector operator*(const Transformation& X, const Vector& c) {
 }
 
 /// inverse transform of a vector by a frame
-Vector operator/(const Transformation& X, const Vector& c) {
+Vector operator/(const Vector& c, const Transformation& X) {
   Vector a(c);
   a -= X.pos;
-  a = X.rot / a;
+  a = a / X.rot;
   return a;
 }
 
@@ -1309,10 +1326,11 @@ void Transformation::addRelativeRotationQuat(double w, double x, double y, doubl
   rot = rot*R;
 }
 
-/** @brief transform the turtle into the frame f,
+/** @brief transform the turtle by f,
     which is interpreted RELATIVE to the current frame
     (new = old * f) */
 void Transformation::appendTransformation(const Transformation& f) {
+  //below is same as ``pos += rot*f.pos;  rot = rot*f.rot;''
   if(!f.pos.isZero) {
     if(rot.isZero) pos += f.pos;
     else mult(pos, rot, f.pos, true);
@@ -1325,8 +1343,12 @@ void Transformation::appendTransformation(const Transformation& f) {
 
 /// inverse transform (new = old * f^{-1})
 void Transformation::appendInvTransformation(const Transformation& f) {
-  rot = rot/f.rot;
-  pos -= rot*f.pos;
+  if(!f.rot.isZero) {
+    rot = rot/f.rot;
+  }
+  if(!f.pos.isZero) {
+    pos -= rot*f.pos;
+  }
 }
 
 /// this = f^{-1}
@@ -1350,9 +1372,15 @@ void Transformation::setAffineMatrix(const double* m) {
 
 ///  to = new * from
 void Transformation::setDifference(const Transformation& from, const Transformation& to) {
-  rot = Quaternion_Id / from.rot * to.rot;
-  pos = from.rot/(to.pos-from.pos);
+  // same as (-from) * to
+  rot = (-from.rot) * to.rot;
+  pos = (-from.rot) * (to.pos-from.pos);
   rot.normalize();
+}
+
+void Transformation::setInterpolate(double t, const Transformation& a, const Transformation b){
+  pos = (1.-t)*a.pos + t*b.pos;
+  rot.setInterpolate(t, a.rot, b.rot);
 }
 
 /// get the current position/orientation/scale in an OpenGL format matrix (of type double[16])
@@ -1374,7 +1402,7 @@ arr Transformation::getAffineMatrix() const {
 /// get inverse OpenGL matrix for this frame (of type double[16])
 double* Transformation::getInverseAffineMatrix(double* m) const {
   Matrix M = rot.getMatrix();
-  Vector pinv; pinv=rot/pos;
+  Vector pinv; pinv=pos/rot;
   m[0] =M.m00; m[1] =M.m10; m[2] =M.m20; m[3] =-pinv.x;
   m[4] =M.m01; m[5] =M.m11; m[6] =M.m21; m[7] =-pinv.y;
   m[8] =M.m02; m[9] =M.m12; m[10]=M.m22; m[11]=-pinv.z;
@@ -1401,7 +1429,7 @@ double* Transformation::getAffineMatrixGL(double* m) const {
 /// get inverse OpenGL matrix for this frame (of type double[16]) */
 double* Transformation::getInverseAffineMatrixGL(double* m) const {
   Matrix M = rot.getMatrix();
-  Vector pinv; pinv=rot/pos;
+  Vector pinv; pinv=pos/rot;
   m[0]=M.m00; m[4]=M.m10; m[8] =M.m20; m[12]=-pinv.x;
   m[1]=M.m01; m[5]=M.m11; m[9] =M.m21; m[13]=-pinv.y;
   m[2]=M.m02; m[6]=M.m12; m[10]=M.m22; m[14]=-pinv.z;
@@ -1426,7 +1454,11 @@ arr Transformation::getWrenchTransform() const {
   arr r = skew(pos.getArr()); //(3, 3);  Featherstone::skew(r, &pos.x); skew pos
   arr R = rot.getArr(); //(3, 3);  rot.getMatrix(R.p);
   transpose(R);
-  arr X(6, 6);  X.setBlockMatrix(R, z, R*~r, R); //[[unklar!!]]
+  arr X(6, 6);
+  X.setMatrixBlock(R, 0, 0);
+  X.setMatrixBlock(z, 0, 3);
+  X.setMatrixBlock(R*~r, 3, 0);
+  X.setMatrixBlock(R, 3, 3); //[[unklar!!]]
   return X;
   //cout <<"\nz=" <<z <<"\nr=" <<r <<"\nR=" <<R <<"\nX=" <<X <<endl;
 }
@@ -1532,6 +1564,8 @@ void Transformation::read(std::istream& is) {
 DynamicTransformation& DynamicTransformation::setText(const char* txt) { read(rai::String(txt)()); return *this; }
 
 /// resets the position to origin, rotation to identity, velocities to zero, scale to unit
+DynamicTransformation::DynamicTransformation(const char* init) { read(rai::String(init).stream()); }
+
 DynamicTransformation& DynamicTransformation::setZero() {
   memset(this, 0, sizeof(DynamicTransformation));
   rot.w = 1.;
@@ -1675,14 +1709,14 @@ void DynamicTransformation::setAffineMatrix(const double* m) {
 void DynamicTransformation::setDifference(const DynamicTransformation& from, const DynamicTransformation& to) {
   if(from.zeroVels && to.zeroVels) {
     rot = Quaternion_Id / from.rot * to.rot;
-    pos = from.rot/(to.pos-from.pos);
+    pos = (-from.rot) * (to.pos-from.pos);
     zeroVels = true;
   } else {
     rot = Quaternion_Id / from.rot * to.rot;
-    angvel = from.rot/(to.angvel-from.angvel);
-    vel = from.rot/(to.vel-from.vel);
-    vel-= from.rot/(from.angvel^(to.pos-from.pos));
-    pos = from.rot/(to.pos-from.pos);
+    angvel = (-from.rot) * (to.angvel-from.angvel);
+    vel = (-from.rot) * (to.vel-from.vel);
+    vel-= (-from.rot) * (from.angvel^(to.pos-from.pos));
+    pos = (-from.rot) * (to.pos-from.pos);
     zeroVels = false;
   }
 }
@@ -1818,18 +1852,26 @@ void Camera::upright(const Vector& up) {
 void Camera::setCameraProjectionMatrix(const arr& P) {
   //P is in standard convention -> computes fixedProjectionMatrix in OpenGL convention from this
   cout <<"desired P=" <<P <<endl;
-  arr Kview=ARR(200., 0., 200., 0., 200., 200., 0., 0., 1.); //OpenGL's calibration matrix
+  arr Kview=arr{200., 0., 200., 0., 200., 200., 0., 0., 1.}; //OpenGL's calibration matrix
   Kview.reshape(3, 3);
   //arr glP=inverse(Kview)*P;
   arr glP=P;
   //glP[2]()*=-1.;
   glP.append(glP[2]);
-  glP[2]()*=.99; glP(2, 2)*=1.02; //some hack to invent a culling coordinate (usually determined via near and far...)
+  glP[2] *= .99; glP(2, 2)*=1.02; //some hack to invent a culling coordinate (usually determined via near and far...)
   glP = ~glP;
   glP *= 1./glP(3, 3);
   cout <<"glP=" <<glP <<endl;
   //glLoadMatrixd(glP.p);
   //fixedProjectionMatrix = glP;
+}
+
+void Camera::read(Graph& ats){
+  focalLength = ats.get<double>("focalLength", -1.);
+  heightAbs = ats.get<double>("orthoAbsHeight", -1.);
+  arr range =  ats.get<arr>("zRange", {});
+  if(range.N){ zNear=range(0); zFar=range(1); }
+  whRatio = ats.get<double>("width", 400.) / ats.get<double>("height", 200.);
 }
 
 void Camera::report(std::ostream& os) {
@@ -2070,3 +2112,6 @@ template rai::Array<rai::Vector>::~Array();
 
 template rai::Array<rai::Transformation*>::Array();
 template rai::Array<rai::Transformation*>::~Array();
+
+#include <Core/util.ipp>
+template rai::Vector rai::getParameter(const char*, const rai::Vector&);

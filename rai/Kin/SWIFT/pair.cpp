@@ -48,6 +48,9 @@
 
 #include <math.h>
 
+#pragma GCC diagnostic ignored "-Wparentheses"
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+
 #include "SWIFT_config.h"
 #include "SWIFT_common.h"
 #include "SWIFT_linalg.h"
@@ -298,7 +301,7 @@ bool Distance_LC( RESULT_TYPE start_state,
 };
 
 void new_PairWorkspace(SWIFT_PairWorkspace*& s){ s = new SWIFT_PairWorkspace; }
-void delete_PairWorkspace(SWIFT_PairWorkspace*& s){ delete s; s=nullptr; };
+void delete_PairWorkspace(SWIFT_PairWorkspace*& s){ delete s; s=nullptr; }
 
 //////////////////////////////////////////////////////////////////////////////
 // Initialization functions
@@ -2082,7 +2085,7 @@ bool SWIFT_PairWorkspace::Walk_Convex_LC( RESULT_TYPE start_state )
 #else
 //#ifdef SWIFT_DEBUG
         if( r++ == STATE_TRANS_CYCLE_DECL ) {
-          //std::cerr << "WARNING - SWIFT infinite loop detected: throwing error ..." << endl;
+          //cerr << "WARNING - SWIFT infinite loop detected: throwing error ..." << endl;
           throw "swift cycle";
           //exit( -1 );
         }

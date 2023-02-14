@@ -24,6 +24,24 @@ OpenGL& rai::ConfigurationViewer::ensure_gl() {
   return *gl;
 }
 
+void rai::ConfigurationViewer::setCamera(rai::Frame* camF){
+  ensure_gl();
+  rai::Camera& cam = gl->camera;
+  {
+    auto _dataLock = gl->dataLock(RAI_HERE);
+    cam.X = camF->ensure_X();
+
+    rai::Node *at=0;
+    if((at=camF->ats->getNode("focalLength"))) cam.setFocalLength(at->get<double>());
+    if((at=camF->ats->getNode("orthoAbsHeight"))) cam.setHeightAbs(at->get<double>());
+    if((at=camF->ats->getNode("zRange"))){ arr z=at->get<arr>(); cam.setZRange(z(0), z(1)); }
+    if((at=camF->ats->getNode("width"))) gl->width=at->get<double>();
+    if((at=camF->ats->getNode("height"))) gl->height=at->get<double>();
+//    cam.setWHRatio((double)gl->width/gl->height);
+  }
+  gl->resize(gl->width, gl->height);
+}
+
 int rai::ConfigurationViewer::update(const char* text, bool nonThreaded) { ensure_gl(); return gl->update(text, nonThreaded); }
 
 int rai::ConfigurationViewer::watch(const char* text) { ensure_gl(); return gl->watch(text); }
@@ -41,12 +59,15 @@ int rai::ConfigurationViewer::update(bool watch) {
     if(watch) gl->text <<"\n[ENTER]";
   }
 
+  int ret=0;
   if(watch) {
-    gl->watch();
+    ret = gl->watch();
     gl->text = drawText();
+  }else{
+    ret = gl->update(nullptr, false);
   }
 
-  return gl->update(nullptr, false);
+  return ret;
 }
 
 void rai::ConfigurationViewer::raiseWindow(){
@@ -55,7 +76,6 @@ void rai::ConfigurationViewer::raiseWindow(){
 }
 
 int rai::ConfigurationViewer::setConfiguration(const rai::Configuration& _C, const char* text, bool watch) {
-  ensure_gl();
   bool copyMeshes = false;
   if(_C.frames.N!=C.frames.N) copyMeshes = true;
   else{
@@ -67,6 +87,8 @@ int rai::ConfigurationViewer::setConfiguration(const rai::Configuration& _C, con
     }
   }
   if(copyMeshes) recopyMeshes(_C);
+
+  ensure_gl();
 
   if(_C.proxies.N) {
     auto _dataLock = gl->dataLock(RAI_HERE);
@@ -141,7 +163,7 @@ bool rai::ConfigurationViewer::playVideo(uint T, uint nFrames, bool watch, doubl
 
   if(saveVideoPath) {
     rai::system(STRING("mkdir -p " <<saveVideoPath));
-    rai::system(STRING("rm -f " <<saveVideoPath <<"*.ppm"));
+    rai::system(STRING("rm -f " <<saveVideoPath <<"*.png"));
   }
 
   CHECK_GE(C.frames.N, T*nFrames, "");
@@ -167,7 +189,7 @@ bool rai::ConfigurationViewer::playVideo(uint T, uint nFrames, bool watch, doubl
 
     {
       auto _dataLock = gl->dataLock(RAI_HERE);
-      if(saveVideoPath) write_ppm(gl->captureImage, STRING(saveVideoPath<<std::setw(4)<<std::setfill('0')<<t<<".ppm"));
+      if(saveVideoPath) write_png(gl->captureImage, STRING(saveVideoPath<<std::setw(4)<<std::setfill('0')<<t<<".png"));
     }
   }
   drawText = tag;
@@ -189,7 +211,7 @@ bool rai::ConfigurationViewer::playVideo(bool watch, double delay, const char* s
 
   if(saveVideoPath) {
     rai::system(STRING("mkdir -p " <<saveVideoPath));
-    rai::system(STRING("rm -f " <<saveVideoPath <<"*.ppm"));
+    rai::system(STRING("rm -f " <<saveVideoPath <<"*.png"));
   }
 
   for(uint t=0; t<framePath.d0; t++) {
@@ -208,7 +230,7 @@ bool rai::ConfigurationViewer::playVideo(bool watch, double delay, const char* s
 
     {
       auto _dataLock = gl->dataLock(RAI_HERE);
-      if(saveVideoPath) write_ppm(gl->captureImage, STRING(saveVideoPath<<std::setw(4)<<std::setfill('0')<<t<<".ppm"));
+      if(saveVideoPath) write_png(gl->captureImage, STRING(saveVideoPath<<std::setw(4)<<std::setfill('0')<<t<<".png"));
     }
   }
   drawText = tag;
@@ -220,7 +242,7 @@ bool rai::ConfigurationViewer::playVideo(bool watch, double delay, const char* s
 }
 
 void rai::ConfigurationViewer::savePng(const char* saveVideoPath) {
-  write_ppm(gl->captureImage, STRING(saveVideoPath<<std::setw(4)<<std::setfill('0')<<(pngCount++)<<".ppm"));
+  write_png(gl->captureImage, STRING(saveVideoPath<<std::setw(4)<<std::setfill('0')<<(pngCount++)<<".png"));
 }
 
 rai::Camera& rai::ConfigurationViewer::displayCamera() {
@@ -241,7 +263,7 @@ void rai::ConfigurationViewer::recopyMeshes(const rai::Configuration& _C) {
     C.copy(_C, false);
     //deep copy meshes!
 //    for(rai::Frame* f:C.frames) if(f->shape) {
-//        ptr<Mesh> org = f->shape->_mesh;
+//        shared_ptr<Mesh> org = f->shape->_mesh;
 //        f->shape->_mesh = make_shared<Mesh> (*org.get());
 //      }
   }

@@ -105,11 +105,21 @@ void F_AccumulatedCollisions::phi2(arr& y, arr& J, const FrameL& F) {
   rai::Configuration& C = F.first()->C;
   C.kinematicsZero(y, J, 1);
   for(rai::Proxy& p: C.proxies) {
-    if(p.a->ID>=F.first()->ID && p.a->ID<=F.last()->ID) { //F.contains(p.a) && F.contains(p.b)) {
+    bool isSelected=false;
+    if(selectAll){
+        //select based on indices, e.g. being in a single time slice of a path config
+        isSelected = (p.a->ID>=F.first()->ID && p.a->ID<=F.last()->ID)
+                     || (p.b->ID>=F.first()->ID && p.b->ID<=F.last()->ID);
+    }else{
+        //select by explicitly looking up in F
+        isSelected = (!selectXor && (F.contains(p.a) || F.contains(p.b)))
+                     || (selectXor && (F.contains(p.a) ^ F.contains(p.b)));
+    }
+    if(isSelected){
       CHECK(p.a->shape, "");
       CHECK(p.b->shape, "");
 
-      //early check: if swift is way out of collision, don't bother computing it precise
+      //early check: if swift is way out of collision, don't bother computing it precisely
       if(p.d > p.a->shape->radius() + p.b->shape->radius() + .01 + margin) continue;
 
       if(!p.collision) p.calc_coll();
@@ -123,7 +133,8 @@ void F_AccumulatedCollisions::phi2(arr& y, arr& J, const FrameL& F) {
       arr y_dist, J_dist;
       p.collision->kinDistance(y_dist, J_dist, Jp1, Jp2);
 
-      if(y_dist.scalar()>margin) continue;
+      if(y_dist.scalar()>margin) continue; //this is the hinge: proxies contribute only when below margin
+
       y += margin-y_dist.scalar();
       J -= J_dist;
     }
@@ -135,8 +146,11 @@ void F_AccumulatedCollisions::phi2(arr& y, arr& J, const FrameL& F) {
 namespace rai{
   template<class T>
 arr block(const Array<T>& A, const Array<T>& B, const Array<T>& C, const Array<T>& D){
-  arr X;
-  X.setBlockMatrix(A, B, C, D);
+  arr X(A.d0+C.d0, A.d1+B.d1);
+  X.setMatrixBlock(A, 0,0);
+  X.setMatrixBlock(B, 0,A.d1);
+  X.setMatrixBlock(C, A.d0,0);
+  X.setMatrixBlock(D, A.d0, A.d1);
   return X;
 }
 }
@@ -221,12 +235,12 @@ void F_PairFunctional::phi2(arr& y, arr& J, const FrameL& F){
 //    checkHessian(f, seed, 1e-5);
 
     x = seed;
-    OptNewton newton(x, f, OptOptions()
+    OptNewton newton(x, f, rai::OptOptions()
                      .set_verbose(0)
                      .set_stopTolerance(1e-5)
                      .set_maxStep(1.)
                      .set_damping(1e-10) );
-    newton.setBounds({0.,0.,0.,0.},{0.,0.,0.,1});
+    newton.setBounds({0.,0.,0.,0.},{-1.,-1.,-1.,1});
     newton.run();
 
     d1 = P->d1;
@@ -265,13 +279,14 @@ void F_PairFunctional::phi2(arr& y, arr& J, const FrameL& F){
 
     auto f = [&func1, &func2](arr& g, arr& H, const arr& x){
       arr g1, g2, H1, H2;
-      double b = 10.;
+      double b = 1e1;
+      //double c = 1e2;
       double d1 = (*func1)(g1, H1, x);
       double d2 = (*func2)(g2, H2, x);
       double dd = d1 - d2;
       if(!!H) H = H1 + H2 + (2.*b*dd)*(H1-H2) + (2.*b)*((g1-g2)^(g1-g2));
-      if(!!g) g = g1 + g2 + (2.*b*dd)*(g1-g2);
-      return d1+d2+b*dd*dd;
+      if(!!g) g = g1 + g2 + (2.*b*dd)*(g1-g2); // + (2*c)*(d1*H1+(g1^g1)+ d2*H2+(g2^g2))*(d1*g1+d2*g2);
+      return d1 + d2 + b*dd*dd; // + c*sumOfSqr(d1*g1+d2*g2);
     };
 
     arr seed = .5*(f1->getPosition()+f2->getPosition());
@@ -282,7 +297,7 @@ void F_PairFunctional::phi2(arr& y, arr& J, const FrameL& F){
 //    checkHessian(f, seed, 1e-5);
 
     x = seed;
-    OptNewton newton(x, f, OptOptions()
+    OptNewton newton(x, f, rai::OptOptions()
                      .set_verbose(0)
                      .set_stopTolerance(1e-5)
                      .set_maxStep(1.)
@@ -310,10 +325,12 @@ void F_PairFunctional::glDraw(OpenGL&) {
 #ifdef RAI_GL
   glColor(0., 1., 0., 1.);
   glDrawDiamond(x(0), x(1), x(2), .05, .05, .05);
-  glColor(0., 1., 1., 1.);
-  glDrawDiamond(P->z1(0), P->z1(1), P->z1(2), .05, .05, .05);
-  glColor(0., 0., 1., 1.);
-  glDrawDiamond(P->z2(0), P->z2(1), P->z2(2), .05, .05, .05);
+  if(P){
+    glColor(0., 1., 1., 1.);
+    glDrawDiamond(P->z1(0), P->z1(1), P->z1(2), .05, .05, .05);
+    glColor(0., 0., 1., 1.);
+    glDrawDiamond(P->z2(0), P->z2(1), P->z2(2), .05, .05, .05);
+  }
 
   glColor(1., 0., 0., 1.);
   glLineWidth(2.f);

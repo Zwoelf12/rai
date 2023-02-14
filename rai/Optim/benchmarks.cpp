@@ -7,20 +7,56 @@
     --------------------------------------------------------------  */
 
 #include "benchmarks.h"
-//#include "functions.h"
+#include "lagrangian.h"
+
+#include <math.h>
+
+//===========================================================================
+
+enum BenchmarkSymbol {
+  BS_none=0,
+  BS_Rosenbrock,
+  BS_Rastrigin,
+  BS_RastriginSOS,
+  BS_Square,
+  BS_RandomSquared,
+  BS_Sum,
+  BS_RandomLP,
+  BS_SimpleConstrained,
+  BS_Wedge,
+  BS_HalfCircle,
+  BS_CircleLine,
+};
+
+template<> const char* rai::Enum<BenchmarkSymbol>::names []= {
+  "none",
+  "Rosenbrock",
+  "Rastrigin",
+  "RastriginSOS",
+  "Square",
+  "RandomSquared",
+  "Sum",
+  "RandomLP",
+  "SimpleConstrained",
+  "Wedge",
+  "HalfCircle",
+  "CircleLine",
+  0
+};
+
 
 //===========================================================================
 
 double _RosenbrockFunction(arr& g, arr& H, const arr& x) {
   double f=0.;
-  for(uint i=1; i<x.N; i++) f += rai::sqr(x(i)-rai::sqr(x(i-1))) + .01*rai::sqr(1-10.*x(i-1));
+  for(uint i=1; i<x.N; i++) f += rai::sqr(x(i)-rai::sqr(x(i-1))) + .01*rai::sqr(1-x(i-1));
 //  f = ::log(1.+f);
   if(!!g) {
     g.resize(x.N).setZero();
     for(uint i=1; i<x.N; i++) {
       g(i) += 2.*(x(i)-rai::sqr(x(i-1)));
       g(i-1) += 2.*(x(i)-rai::sqr(x(i-1)))*(-2.*x(i-1));
-      g(i-1) += .01*2.*(1-10.*x(i-1))*(-10.);
+      g(i-1) -= .01*2.*(1-x(i-1));
     }
   }
   if(!!H) {
@@ -34,14 +70,17 @@ double _RosenbrockFunction(arr& g, arr& H, const arr& x) {
       H(i-1, i) += -4.*x(i-1);
       H(i-1, i-1) += -4.*x(i-1)*(-2.*x(i-1)) - 4.*(x(i)-rai::sqr(x(i-1)));
 
-      //g(i-1) += .01*2.*(1-10.*x(i-1))*(-10.);
-      H(i-1, i-1) += .01*2.*(-10.)*(-10.);
+      //g(i-1) += .01*2.*(1-x(i-1))*(-10.);
+      H(i-1, i-1) += .01*2.;
     }
   }
   return f;
-};
+}
 
-ScalarFunction RosenbrockFunction() { return _RosenbrockFunction; }
+struct NLP_Rosenbrock : ScalarUnconstrainedProgram {
+  NLP_Rosenbrock(uint dim) { dimension=dim; }
+  virtual double f(arr &g, arr &H, const arr &x){ return _RosenbrockFunction(g, H, x); }
+};
 
 //===========================================================================
 
@@ -59,7 +98,11 @@ double _RastriginFunction(arr& g, arr& H, const arr& x) {
   return f;
 }
 
-ScalarFunction RastriginFunction() { return _RastriginFunction; }
+struct NLP_Rastrigin : ScalarUnconstrainedProgram {
+  NLP_Rastrigin(uint dim){ dimension=dim; }
+  virtual uint getDimension(){ return dimension; }
+  virtual double f(arr &g, arr &H, const arr &x){ return _RastriginFunction(g, H, x); }
+};
 
 //===========================================================================
 
@@ -133,7 +176,7 @@ struct _ChoiceFunction : ScalarFunction {
       case rastrigin: f = _RastriginFunction(g, H, y); break;
       default: NIY;
     }
-    if(!!g) g = ~C*g; //elem-wise product
+    if(!!g) g = ~C * g;
     if(!!H) H = ~C * H * C;
     return f;
   }
@@ -149,161 +192,64 @@ ScalarFunction ChoiceFunction() { return (ScalarFunction&)choice; }
 //===========================================================================
 
 void generateConditionedRandomProjection(arr& M, uint n, double condition) {
-  uint i, j;
-  //let M be a ortho-normal matrix (=random rotation matrix)
-  M.resize(n, n);
-  rndUniform(M, -1., 1., false);
-  //orthogonalize
-  for(i=0; i<n; i++) {
-    for(j=0; j<i; j++) M[i]()-=scalarProduct(M[i], M[j])*M[j];
-    M[i]()/=length(M[i]);
-  }
-  //we condition each column of M with powers of the condition
-  for(i=0; i<n; i++) M[i]() *= pow(condition, double(i) / (2.*double(n - 1)));
 }
 
 //===========================================================================
 
-SquaredCost::SquaredCost(uint _n, double condition) {
-  initRandom(_n, condition);
-}
+NLP_Squared::NLP_Squared(uint _n, double condition, bool random) : n(_n) {
+  dimension = n;
+  featureTypes = rai::consts<ObjectiveType>(OT_sos, n);
 
-void SquaredCost::initRandom(uint _n, double condition) {
-  n=_n;
-  generateConditionedRandomProjection(M, n, condition);
-  //the metric is equal M^T*M
-  //C=~M*M;
-  //arr U,d,V;    svd(U, d, V, C);    cout <<U <<d <<V <<M <<C <<endl;
-}
+  //let C be a ortho-normal matrix (=random rotation matrix)
+  C.resize(n, n);
 
-void SquaredCost::fv(arr& y, arr& J, const arr& x) {
-  CHECK_EQ(x.N, n, "");
-  y = M*x;
-  if(!!J) J=M;
-}
-
-//===========================================================================
-
-NonlinearlyWarpedSquaredCost::NonlinearlyWarpedSquaredCost(uint _n, double condition):sq(_n, condition) {
-  n=_n;
-}
-
-void NonlinearlyWarpedSquaredCost::initRandom(uint _n, double condition) {
-  n=_n;
-  sq.initRandom(n, condition);
-}
-
-void NonlinearlyWarpedSquaredCost::fv(arr& y, arr& J, const arr& x) {
-  CHECK_EQ(x.N, n, "");
-  arr xx=atan(x);
-  y=sq.M*xx;
-  if(!!J) {
-    arr gg(xx.N);
-    for(uint i=0; i<gg.N; i++) gg(i) = 1./(1.+x(i)*x(i));
-    J = sq.M*diag(gg);
-  }
-}
-
-//===========================================================================
-
-void ParticleAroundWalls2::getStructure(uintA& variableDimensions, uintA& featureTimes, ObjectiveTypeA& featureTypes) {
-  variableDimensions = consts<uint>(n, T);
-
-  if(!!featureTimes) featureTimes.clear();
-  if(!!featureTypes) featureTypes.clear();
-  for(uint t=0; t<T; t++) {
-    if(!!featureTimes) featureTimes.append(consts<uint>(t, n));
-    if(!!featureTypes) featureTypes.append(consts(OT_sos, n));
-    if(t==T/4 || t==T/2 || t==3*T/4 || t==T-1) {
-      if(!!featureTimes) featureTimes.append(consts<uint>(t, n));
-      if(!!featureTypes) featureTypes.append(consts(OT_ineq, n));
-    }
-  }
-}
-
-void ParticleAroundWalls2::phi(arr& phi, arrA& J, arrA& H, uintA& featureTimes, ObjectiveTypeA& tt, const arr& x) {
-
-  uint M=x.N + 4*3;
-  phi.resize(M);
-  if(!!J) J.resize(M);
-  if(!!tt) tt.resize(M);
-
-  uint m=0;
-  for(uint t=0; t<T; t++) {
-    //-- construct x_bar
-    arr x_bar;
-    if(t>=k) {
-      x_bar.referToRange(x, t-k, t);
-    } else { //x_bar includes the prefix
-      x_bar.resize(k+1, n);
-      for(int i=t-k; i<=(int)t; i++) x_bar[i-t+k]() = (i<0)? zeros(n) : x[i];
-    }
-
-    //-- assert some dimensions
-    CHECK_EQ(x_bar.d0, k+1, "");
-    CHECK_EQ(x_bar.d1, n, "");
-
-    //-- transition costs
+  if(random){
+    rndUniform(C, -1., 1., false);
+    //orthogonalize
     for(uint i=0; i<n; i++) {
-      if(k==1) {
-        phi(m) = x_bar(1, i)-x_bar(0, i); //penalize velocity
-        if(!!J) { J(m).resize(k+1, n).setZero(); J(m)(1, i) = 1.;  J(m)(0, i) = -1.; }
-      }
-      if(k==2) {
-        phi(m) = x_bar(2, i)-2.*x_bar(1, i)+x_bar(0, i); //penalize acceleration
-        if(!!J) { J(m).resize(k+1, n).setZero(); J(m)(2, i) = 1.;  J(m)(1, i) = -2.;  J(m)(0, i) = 1.; }
-      }
-      if(k==3) {
-        phi(m) = x_bar(3, i)-3.*x_bar(2, i)+3.*x_bar(1, i)-x_bar(0, i); //penalize jerk
-        if(!!J) { J(m).resize(k+1, n).setZero(); J(m)(3, i) = 1.;  J(m)(2, i) = -3.;  J(m)(1, i) = +3.;  J(m)(0, i) = -1.; }
-      }
-      if(!!J && t<k) J(m) = J(m).sub(k-t, -1, 0, -1); //cut the prefix Jacobians
-      if(!!tt) tt(m) = OT_sos;
-      m++;
+      for(uint j=0; j<i; j++) C[i] -= scalarProduct(C[i], C[j])*C[j];
+      C[i] /= length(C[i]);
+    }
+    //we condition each column of M with powers of the condition
+    for(uint i=0; i<n; i++) C[i] *= pow(condition, double(i) / (2.*double(n - 1)));
+
+  }else{
+    arr cond(n);
+    if(n>1) {
+      for(uint i=0; i<n; i++) cond(i) = pow(condition, 0.5*i/(n-1));
+    }else{
+      cond = 1.;
     }
 
-    //-- wall constraints
-    if(t==T/4 || t==T/2 || t==3*T/4 || t==T-1) {
-      for(uint i=0; i<n; i++) { //add barrier costs to each dimension
-        if(t==T/4) {
-          phi(m) = (i+1.-x_bar(k, i)); //``greater than i+1''
-          if(!!J) { J(m).resize(k+1, n).setZero(); J(m)(k, i) = -1.; }
-        }
-        if(t==T/2) {
-          phi(m) = (x_bar(k, i)+i+1.); //``lower than -i-1''
-          if(!!J) { J(m).resize(k+1, n).setZero(); J(m)(k, i) = +1.; }
-        }
-        if(t==3*T/4) {
-          phi(m) = (i+1.-x_bar(k, i)); //``greater than i+1''
-          if(!!J) { J(m).resize(k+1, n).setZero(); J(m)(k, i) = -1.; }
-        }
-        if(t==T-1) {
-          phi(m) = (x_bar(k, i)+i+1.); //``lower than -i-1''
-          if(!!J) { J(m).resize(k+1, n).setZero(); J(m)(k, i) = +1.; }
-        }
-        if(!!tt) tt(m) = OT_ineq;
-        m++;
-      }
-    }
+    C = diag(cond);
+//    C(0,1) = C(0,0);
+//    C(1,0) = -C(1,1);
   }
-  CHECK_EQ(m, M, "");
 }
+
+//===========================================================================
 
 ChoiceConstraintFunction::ChoiceConstraintFunction() {
   which = (WhichConstraint) rai::getParameter<double>("constraintChoice");
   n = rai::getParameter<uint>("dim", 2);
-}
 
-uint ChoiceConstraintFunction::getDimension() {
-  return n;
-}
+  dimension = n;
 
-void ChoiceConstraintFunction::getFeatureTypes(ObjectiveTypeA& tt) {
+  bounds_lo.resize(n) = -2.;
+  bounds_up.resize(n) = +2.;
+  if(which==boundConstrained){
+      bounds_lo(0) = +0.5;
+  //    bounds_lo(1) = +0.51;
+  }
+
+  ObjectiveTypeA& tt = featureTypes;
   tt.clear();
   tt.append(OT_f);
   switch(which) {
+    case none:
+      break;
     case wedge2D:
-      tt.append(consts(OT_ineq, n));
+      tt.append(rai::consts(OT_ineq, n));
       break;
     case halfcircle2D:
       tt.append(OT_ineq);
@@ -314,7 +260,7 @@ void ChoiceConstraintFunction::getFeatureTypes(ObjectiveTypeA& tt) {
       tt.append(OT_eq);
       break;
     case randomLinear:
-      tt.append(consts(OT_ineq, 5*n+5));
+      tt.append(rai::consts(OT_ineq, 5*n+5));
       break;
     case boundConstrained:
       break;
@@ -325,15 +271,6 @@ void ChoiceConstraintFunction::getFeatureTypes(ObjectiveTypeA& tt) {
   }
 }
 
-void ChoiceConstraintFunction::getBounds(arr& bounds_lo, arr& bounds_hi) {
-  bounds_lo.resize(n) = -2.;
-  bounds_hi.resize(n) = +2.;
-  if(which==boundConstrained){
-    bounds_lo(0) = +0.5;
-//    bounds_lo(1) = +0.51;
-  }
-}
-
 void ChoiceConstraintFunction::evaluate(arr& phi, arr& J, const arr& x) {
   CHECK_EQ(x.N, n, "");
   phi.clear();  if(!!J) J.clear();
@@ -341,6 +278,7 @@ void ChoiceConstraintFunction::evaluate(arr& phi, arr& J, const arr& x) {
   phi.append(ChoiceFunction()(J, NoArr, x));
 
   switch(which) {
+    case none: HALT("should not be here")
     case wedge2D:
       for(uint i=0; i<x.N; i++) { phi.append(-sum(x)+1.5*x(i)-.2); }
       if(!!J) { arr Jg(x.N, x.N); Jg=-1.; for(uint i=0; i<x.N; i++) Jg(i, i) = +.5; J.append(Jg); }
@@ -363,7 +301,7 @@ void ChoiceConstraintFunction::evaluate(arr& phi, arr& J, const arr& x) {
         }
       }
       CHECK_EQ(randomG.d1, x.N+1, "you changed dimensionality");
-      phi.append(randomG * cat({1.}, x));
+      phi.append(randomG * (arr{1.}, x));
       if(!!J) J.append(randomG.sub(0, -1, 1, -1));
     } break;
     case boundConstrained: {
@@ -383,3 +321,78 @@ void ChoiceConstraintFunction::getFHessian(arr& H, const arr& x) {
   ChoiceFunction()(NoArr, H, x);
 }
 
+
+
+std::shared_ptr<NLP> getBenchmarkFromCfg(){
+  rai::Enum<BenchmarkSymbol> bs (rai::getParameter<rai::String>("benchmark"));
+  uint dim = rai::getParameter<uint>("benchmark/dim", 2);
+  double forsyth = rai::getParameter<double>("benchmark/forsyth", -1.);
+  double condition = rai::getParameter<double>("benchmark/condition", 10.);
+
+  //-- unconstrained problems
+
+  {
+    std::shared_ptr<ScalarUnconstrainedProgram> nlp;
+
+    if(bs==BS_Rosenbrock) nlp = make_shared<NLP_Rosenbrock>(dim);
+    else if(bs==BS_Rastrigin) nlp = make_shared<NLP_Rastrigin>(dim);
+    else if(forsyth>0.){
+      shared_ptr<NLP> org;
+      if(bs==BS_Square) org = make_shared<NLP_Squared>(dim, condition, false);
+      else if(bs==BS_RandomSquared) org = make_shared<NLP_Squared>(dim, condition, true);
+      else if(bs==BS_RastriginSOS) org = make_shared<NLP_RastriginSOS>();
+      if(org){
+        auto lag = make_shared<LagrangianProblem>(org); //convert to scalar
+        nlp = make_shared<ScalarUnconstrainedProgram>(lag, dim);
+      }
+    }
+
+    if(nlp){
+      arr bounds = rai::getParameter<arr>("benchmark/bounds", {});
+      if(bounds.N){
+        nlp->bounds_lo = rai::consts<double>(bounds(0), dim);
+        nlp->bounds_up = rai::consts<double>(bounds(1), dim);
+      }
+      if(forsyth>0.) nlp->forsythAlpha = forsyth;
+      return nlp;
+    }
+  }
+
+  //-- constrained problems
+
+  std::shared_ptr<NLP> nlp;
+
+  if(bs==BS_RandomLP) nlp = make_shared<NLP_RandomLP>(dim);
+  else if(bs==BS_Square) nlp = make_shared<NLP_Squared>(dim, condition, false);
+  else if(bs==BS_RandomSquared) nlp = make_shared<NLP_Squared>(dim, condition, true);
+  else if(bs==BS_RastriginSOS) nlp = make_shared<NLP_RastriginSOS>();
+  else if(bs==BS_Wedge) nlp = make_shared<NLP_Wedge>();
+  else if(bs==BS_HalfCircle) nlp = make_shared<NLP_HalfCircle>();
+  else if(bs==BS_CircleLine) nlp = make_shared<NLP_CircleLine>();
+  else HALT("can't interpret benchmark symbol: " <<bs);
+
+  arr bounds = rai::getParameter<arr>("benchmark/bounds", {});
+  if(bounds.N){
+    nlp->bounds_lo = rai::consts<double>(bounds(0), dim);
+    nlp->bounds_up = rai::consts<double>(bounds(1), dim);
+  }
+
+  return nlp;
+}
+
+void NLP_RastriginSOS::evaluate(arr& phi, arr& J, const arr& x) {
+  CHECK_EQ(x.N, 2, "");
+  phi.resize(4);
+  phi(0) = sin(a*x(0));
+  phi(1) = sin(a*condition*x(1));
+  phi(2) = 2.*x(0);
+  phi(3) = 2.*condition*x(1);
+  if(!!J) {
+    J.resize(4, 2);
+    J.setZero();
+    J(0, 0) = cos(a*x(0))*a;
+    J(1, 1) = cos(a*condition*x(1))*a*condition;
+    J(2, 0) = 2.;
+    J(3, 1) = 2.*condition;
+  }
+}

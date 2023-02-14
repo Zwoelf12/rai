@@ -18,15 +18,15 @@ void TEST(String){
   s="a=1.2, b=3.4, blabla";
   cout <<s <<'|' <<endl;
   s >>(const char*)"a=" >>a >>(const char*)", b=" >>b;  // read things from string
-  s >>tmp;      // read string from string (starting at current scan position)
+  s >>"," >>tmp;      // read string from string (starting at current scan position)
   CHECK_ZERO(a-1.2, 1e-10, "");
   CHECK_ZERO(b-3.4, 1e-10, "");
-  CHECK_EQ(tmp,", blabla", "");
+  CHECK_EQ(tmp,"blabla", "");
   cout <<"a=" <<a <<", b=" <<b <<tmp <<'|' <<endl;
 
   s.resetIstream();   // reset the istream pointer of source string before...
   s >>tmp;            // ...reading string from string (starting at beginning of string)
-  CHECK_EQ(tmp,"a=1.2, b=3.4, blabla", "");
+  CHECK_EQ(tmp,"a=1.2", "");
   cout <<tmp <<'|' <<endl;
 
   s.resetIstream();   // reset the istream pointer of source string before...
@@ -52,24 +52,28 @@ void TEST(Parameter){
   cout <<p1 <<endl <<p2 <<endl <<d <<endl;
 }
 
+void TEST(Wait){
+  rai::wait();
+}
+
 void TEST(Timer){
   for(uint t=0;t<10;t++){
     cout <<"now=" <<rai::date() <<" clockTime=" <<std::setprecision(14) <<rai::clockTime() <<" realTime=" <<std::setprecision(14) <<rai::realTime() <<" cpuTime=" <<std::setprecision(14) <<rai::cpuTime() <<endl;
     rai::wait(.001);
   }
 
-  rai::timerStart();
+  double realTime = -rai::realTime();
+  double cpuTime = -rai::cpuTime();
+
   for(uint i=0;i<4;i++){
-    cout <<"i=" <<i <<flush;
+    cout <<"i=" <<i <<std::flush;
     for(uint j=0;j<100000;j++){ j+=10; j-=10; } //do something stupid
     rai::wait(.5);
-    cout <<" cpu timer reads " <<rai::timerRead(false) <<"sec" <<endl;
-    if(i==1){ rai::timerPause(); cout <<"timer paused" <<endl; }
-    if(i==2){ rai::timerResume(); cout <<"timer resumed" <<endl; }
+    cout <<" cpu timer reads " <<rai::cpuTime()+cpuTime <<"sec" <<endl;
   }
-  double cpuTime=rai::timerRead();
-  double realTime=rai::realTime();
-  CHECK_ZERO(realTime-2., .5, "wait failed");
+  cpuTime += rai::cpuTime();
+  realTime += rai::realTime();
+  CHECK_ZERO(realTime-2., .01, "wait failed");
   CHECK(cpuTime>=0. && cpuTime<1.,"no cpu time measured");
 }
 
@@ -82,7 +86,7 @@ void TEST(Logging){
 
 void TEST(Exception){
   try{
-    CHECK_EQ(2,1,"two is not equal to one")
+    CHECK_EQ(2,1,"two is not equal to one (INTENDED EXCEPTION TEST)")
   }catch(const std::runtime_error& err){
     LOG(0) <<"Exception caught: " <<err.what();
   }
@@ -111,6 +115,7 @@ int MAIN(int argc,char** argv){
   testPaths();
   testString();
   testParameter();
+  testWait();
   testTimer();
   testLogging();
   testException();

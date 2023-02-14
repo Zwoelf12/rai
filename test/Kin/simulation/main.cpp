@@ -3,6 +3,7 @@
 #include <Kin/feature.h>
 #include <Kin/simulation.h>
 #include <Kin/viewer.h>
+#include <Kin/F_geometrics.h>
 
 #include <iomanip>
 
@@ -23,7 +24,7 @@ void testPushes(){
 
   arr Xstart = C.getFrameState();
 
-  for(uint k=0;k<5;k++){
+  for(uint k=0;k<2;k++){
 
     //restart from the same state multiple times
     S.setState(Xstart);
@@ -34,9 +35,9 @@ void testPushes(){
 
       //some good old fashioned IK
       arr q = C.getJointState();
-      Value diff = C.feature(FS_positionDiff, {"gripper", "box"})->eval(C);
-      diff.y *= .005/length(diff.y);
-      q -= pseudoInverse(diff.J, NoArr, 1e-2) * diff.y;
+      arr diff = C.feature(FS_positionDiff, {"gripper", "box"})->eval(C);
+      diff *= .02/length(diff);
+      q -= pseudoInverse(diff.J(), NoArr, 1e-2) * diff;
 //      C.setJointState(q);
 
       S.step(q, tau, S._position);
@@ -82,19 +83,22 @@ void testGrasp(){
     arr q = C.getJointState();
 
     //some good old fashioned IK
-    if(t<=300){
-      Value diff = C.feature(FS_oppose, {"finger1", "finger2", "ring4"})->eval(C);
-      diff.y *= rai::MIN(.008/length(diff.y), 1.);
-      q -= pseudoInverse(diff.J, NoArr, 1e-2) * diff.y;
+    if(t<=500){
+      arr diff = F_GraspOppose()
+//                 .setCentering()
+                 .eval(C.getFrames({"finger1", "finger2", "ring4"}));
+//                 C.feature(FS_oppose, {"finger1", "finger2", "ring4"})->eval(C);
+      diff *= rai::MIN(.01/length(diff), 1.);
+      q -= pseudoInverse(diff.J(), NoArr, 1e-2) * diff;
     }
 
-    if(t==300){
+    if(t==500){
       S.closeGripper("gripper");
     }
 
     if(S.getGripperIsGrasping("gripper")){
-      Value diff = C.feature(FS_position, {"gripper"})->eval(C);
-      q -= pseudoInverse(diff.J, NoArr, 1e-2) * ARR(0.,0.,-2e-4);
+      arr diff = C.feature(FS_position, {"gripper"})->eval(C);
+      q -= pseudoInverse(diff.J(), NoArr, 1e-2) * arr{0.,0.,-1e-3};
     }
 
     if(t==900){
@@ -113,17 +117,17 @@ void testGrasp(){
 
 void testOpenClose(){
   rai::Configuration RealWorld;
-  RealWorld.addFile("../../../../rai-robotModels/scenarios/pandasTable.g");
+  RealWorld.addFile("model.g"); //../../../../rai-robotModels/scenarios/pandasTable.g");
   rai::Simulation S(RealWorld, S._bullet, true);
   //rai::Simulation S(RealWorld, S._physx, true);
 
   rai::Configuration C;
-  C.addFile("../../../../rai-robotModels/scenarios/pandasTable.g");
+  C.addFile("model.g"); //../../../../rai-robotModels/scenarios/pandasTable.g");
   C.watch(false, "initial");
 
   double tau = .01;
 
-  S.closeGripper("r_gripper");
+  S.closeGripper("gripper");
   for(uint t=0;;t++){
     rai::wait(tau);
 
@@ -132,10 +136,10 @@ void testOpenClose(){
     C.watch();
 
     S.step({}, tau, S._none);
-    if(S.getGripperIsClose("r_gripper")) break;
+    if(S.getGripperIsClose("gripper")) break;
   }
 
-  S.openGripper("r_gripper");
+  S.openGripper("gripper");
   for(uint t=0;;t++){
     rai::wait(tau);
 
@@ -144,7 +148,7 @@ void testOpenClose(){
     C.watch();
 
     S.step({}, tau, S._none);
-    if(S.getGripperIsOpen("r_gripper")) break;
+    if(S.getGripperIsOpen("gripper")) break;
   }
 }
 
@@ -184,8 +188,6 @@ void makeRndScene(){
     if(!(t%10)) S.getImageAndDepth(rgb, depth); //we don't need images with 100Hz, rendering is slow
 
     S.step({}, tau, S._none);
-
-    cout <<"depth in range: " <<depth.min() <<' ' <<depth.max() <<endl;
   }
 
   C.sortFrames();
@@ -298,10 +300,10 @@ int main(int argc,char **argv){
   makeRndScene();
   testFriction();
   testStackOfBlocks();
-  testPushes();
-  testGrasp();
-  testOpenClose();
   testCompound();
+  testPushes();
+  testOpenClose();
+  testGrasp();
 
   return 0;
 }

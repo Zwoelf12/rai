@@ -10,6 +10,7 @@
 
 #include "featureSymbols.h"
 #include "../Core/array.h"
+#include "../Core/graph.h"
 #include "../Geo/geo.h"
 #include "../Geo/mesh.h"
 
@@ -40,14 +41,6 @@ struct ConfigurationViewer;
 
 //===========================================================================
 
-struct Value {
-  arr y, J;
-  Value(){}
-  Value(const arr& y, const arr& J) : y(y), J(J) {}
-  void write(ostream& os) const { os <<"y:" <<y <<" J:" <<J; }
-};
-stdOutPipe(Value)
-
 extern rai::Configuration& NoConfiguration;
 
 typedef rai::Array<rai::Dof*> DofL;
@@ -69,14 +62,14 @@ struct Configuration : GLDrawer {
   unique_ptr<struct sConfiguration> self;
 
   //-- fundamental structure
-  FrameL frames;     ///< list of coordinate frames, with shapes, joints, inertias attached
-  ForceExchangeL forces; ///< list of force exchanges between frames
-  ProxyA proxies;    ///< list of current collision proximities between frames
-  arr q;             ///< the current configuration state (DOF) vector
+  FrameL frames;    ///< list of coordinate frames, with shapes, joints, inertias attached
+  DofL otherDofs;   ///< list of other degrees of freedom (forces)
+  ProxyA proxies;   ///< list of current collision proximities between frames
+  arr q;            ///< the current configuration state (DOF) vector
   arr qInactive;    ///< configuration state of all inactive DOFs
 
   //-- data structure state (lazy evaluation leave the state structure out of sync)
-  DofL activeJoints; //list of currently active joints (computed with ensure_activeSets(); reset with reset_q())
+  DofL activeDofs; //list of currently active dofs (computed with ensure_activeSets(); reset with reset_q())
   bool _state_indexedJoints_areGood=false; // the active sets, incl. their topological sorting, are up to date
   bool _state_q_isGood=false; // the q-vector represents the current relative transforms (and force dofs)
   bool _state_proxies_isGood=false; // the proxies have been created for the current state
@@ -102,8 +95,8 @@ struct Configuration : GLDrawer {
   /// @name initializations, building configurations
   Frame* addFrame(const char* name, const char* parent=nullptr, const char* args=nullptr);
   Frame* addFile(const char* filename);
-  void addAssimp(const char* filename);
-  Frame* addCopies(const FrameL& F, const ForceExchangeL& _forces);
+  Frame* addAssimp(const char* filename);
+  Frame* addCopies(const FrameL& F, const DofL& _dofs);
   void addConfiguration(const Configuration& C, double tau=1.);
 
   /// @name get frames
@@ -119,14 +112,18 @@ struct Configuration : GLDrawer {
   FrameL getJointsSlice(const FrameL& slice, bool activesOnly=true) const;
   uintA getJointIDs() const;
   StringA getJointNames() const;
+  DofL getDofs(const FrameL& F, bool activesOnly=true) const;
   uintA getCtrlFramesAndScale(arr& scale=NoArr) const;
   FrameL getRoots() const;
+  FrameL getParts() const;
   FrameL getLinks() const;
+  rai::Array<DofL> getPartsDofs() const;
 
   /// @name get dof or frame state
   uint getJointStateDimension() const;
   const arr& getJointState() const;
-  arr getJointState(const FrameL& F) const;
+  arr getDofState(const DofL& dofs) const;
+  arr getJointState(const FrameL& F) const { return getDofState(getDofs(F, false)); }
   arr getJointState(const uintA& F) const { return getJointState(getFrames(F)); } ///< same as getJointState() with getFrames()
   arr getJointStateSlice(uint t, bool activesOnly=true){  return getJointState(getJointsSlice(t, activesOnly));  }
   arr getFrameState() const { return getFrameState(frames); } ///< same as getFrameState() for all \ref frames
@@ -135,17 +132,21 @@ struct Configuration : GLDrawer {
 
   /// @name set state
   void setJointState(const arr& _q);
-  void setJointState(const arr& _q, const FrameL& F);
+  void setDofState(const arr& _q, const DofL& dofs);
+  void setJointState(const arr& _q, const FrameL& F){ setDofState(_q, getDofs(F, false)); }
   void setJointState(const arr& _q, const uintA& F){ setJointState(_q, getFrames(F)); } ///< same as setJointState() with getFrames()
   void setJointStateSlice(const arr& _q, uint t, bool activesOnly=true){  setJointState(_q, getJointsSlice(t, activesOnly));  }
   void setFrameState(const arr& X){ setFrameState(X, frames); } ///< same as setFrameState() for all \ref frames
   void setFrameState(const arr& X, const FrameL& F);
   void setFrameState(const arr& X, const uintA& F){ setFrameState(X, getFrames(F)); } ///< same as setFrameState() with getFrames()
   void setTaus(double tau);
+  void setTaus(const arr& tau);
+  void setRandom(uint timeSlices_d1=0, int verbose=0);
 
   /// @name active DOFs selection
-  void setActiveJoints(const DofL& F);
+  void setActiveDofs(const DofL& dofs);
   void selectJoints(const FrameL& F, bool notThose=false);
+  void selectJoints(const DofL& dofs, bool notThose=false);
   void selectJointsByName(const StringA&, bool notThose=false);
   void selectJointsBySubtrees(const FrameL& roots, bool notThose=false);
   void selectJointsByAtt(const StringA& attNames, bool notThose=false);
@@ -153,7 +154,8 @@ struct Configuration : GLDrawer {
   /// @name get other information
   arr getCtrlMetric() const;
   arr getNaturalCtrlMetric(double power=.5) const;               ///< returns diagonal of a natural metric in q-space, depending on tree depth
-  arr getLimits() const;
+  arr getLimits(const DofL& dofs) const;
+  arr getLimits() const { return getLimits(activeDofs); }
   double getEnergy(const arr& qdot);
   double getTotalPenetration(); ///< proxies are returns from a collision engine; contacts stable constraints
   Graph reportForces();
@@ -200,6 +202,8 @@ struct Configuration : GLDrawer {
   void jacobian_tau(arr& J, Frame* a) const;
   void jacobian_zero(arr& J, uint n) const;
 
+  arr kinematics_pos(Frame* a, const Vector& rel=NoVector) const { arr y,J; kinematicsPos(y, J, a, rel); if(!!J) y.J()=J; return y; }
+
   void kinematicsZero(arr& y, arr& J, uint n) const;
   void kinematicsPos(arr& y, arr& J, Frame* a, const Vector& rel=NoVector) const;
   void kinematicsVec(arr& y, arr& J, Frame* a, const Vector& vec=NoVector) const;
@@ -216,9 +220,9 @@ struct Configuration : GLDrawer {
 
   /// @name features
   shared_ptr<Feature> feature(FeatureSymbol fs, const StringA& frames= {}) const;
-  void evalFeature(arr& y, arr& J, FeatureSymbol fs, const StringA& frames= {}) const;
-  template<class T> Value eval(const StringA& frames= {}){ return T().eval(getFrames(frames)); }
-  Value eval(FeatureSymbol fs, const StringA& frames= {});
+  arr evalFeature(FeatureSymbol fs, const StringA& frames= {}) const;
+  template<class T> arr eval(const StringA& frames= {}){ return T().eval(getFrames(frames)); }
+  arr eval(FeatureSymbol fs, const StringA& frames= {});
 
   /// @name high level inverse kinematics
   void inverseKinematicsPos(Frame& frame, const arr& ytarget, const Vector& rel_offset=NoVector, int max_iter=3);
@@ -233,9 +237,9 @@ struct Configuration : GLDrawer {
   void addProxies(const uintA& collisionPairs);
 
   /// @name extensions on demand
-  shared_ptr<ConfigurationViewer>& gl(const char* window_title=nullptr, bool offscreen=false);
-  shared_ptr<SwiftInterface> swift();
-  shared_ptr<FclInterface> fcl();
+  std::shared_ptr<ConfigurationViewer>& gl(const char* window_title=nullptr, bool offscreen=false);
+  std::shared_ptr<SwiftInterface> swift();
+  std::shared_ptr<FclInterface> fcl();
   void swiftDelete();
   PhysXInterface& physx();
   OdeInterface& ode();
@@ -253,7 +257,7 @@ struct Configuration : GLDrawer {
   void stepDynamics(arr& qdot, const arr& u_control, double tau, double dynamicNoise = 0.0, bool gravity = true);
 
   /// @name I/O
-  void write(std::ostream& os) const;
+  void write(std::ostream& os, bool explicitlySorted=false) const;
   void write(Graph& G) const;
   void writeURDF(std::ostream& os, const char* robotName="myrobot") const;
   void writeCollada(const char* filename, const char* format="collada") const;
@@ -265,8 +269,9 @@ struct Configuration : GLDrawer {
   void displayDot();
 
   //some info
-  void report(std::ostream& os=std::cout) const;
-  void reportProxies(std::ostream& os=std::cout, double belowMargin=1., bool brief=true) const;
+  void report(std::ostream& os=cout) const;
+  void reportProxies(std::ostream& os=cout, double belowMargin=1., bool brief=true) const;
+  void reportLimits(std::ostream& os=cout) const;
 
 private:
   void readFromGraph(const Graph& G, bool addInsteadOfClear=false);

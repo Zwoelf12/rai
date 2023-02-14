@@ -10,7 +10,7 @@
 
 #include "../ry/types.h"
 #include "../Optim/NLP_Factory.h"
-#include "../Optim/solver.h"
+#include "../Optim/NLP_Solver.h"
 #include "../KOMO/opt-benchmarks.h"
 #include <pybind11/functional.h>
 #include <pybind11/iostream.h>
@@ -19,10 +19,10 @@ void init_Optim(pybind11::module& m) {
 
   //===========================================================================
 
-  pybind11::class_<MathematicalProgram, shared_ptr<MathematicalProgram>> __mp(m, "MathematicalProgram");
+  pybind11::class_<NLP, shared_ptr<NLP>> __mp(m, "NLP");
   __mp
 
-  .def("evaluate", [](std::shared_ptr<MathematicalProgram>& self, const arr& x){
+  .def("evaluate", [](std::shared_ptr<NLP>& self, const arr& x){
     arr phi, J;
     self->evaluate(phi, J, x);
     return std::tuple<arr,arr>(phi, J);
@@ -30,17 +30,13 @@ void init_Optim(pybind11::module& m) {
   "query the NLP at a point $x$; returns the tuple $(phi,J)$, which is the feature vector and its Jacobian; features define cost terms, sum-of-square (sos) terms, inequalities, and equalities depending on 'getFeatureTypes'"
   )
 
-  .def("getFeatureTypes", [](std::shared_ptr<MathematicalProgram>& self){
-    ObjectiveTypeA ot;
-    self->getFeatureTypes(ot);
-    return ot;
-  },
-  "features (entries of $phi$) can be of one of (ry.OT.f, ry.OT.sos, ry.OT.ineq, ry.OT.eq), which means (cost, sum-of-square, inequality, equality). The total cost $f(x)$ is the sum of all f-terms plus sum-of-squares of sos-terms."
+  .def("getFeatureTypes", &NLP::getFeatureTypes,
+       "features (entries of $phi$) can be of one of (ry.OT.f, ry.OT.sos, ry.OT.ineq, ry.OT.eq), which means (cost, sum-of-square, inequality, equality). The total cost $f(x)$ is the sum of all f-terms plus sum-of-squares of sos-terms."
   )
 
-  .def("getDimension", &MathematicalProgram::getDimension, "return the dimensionality of $x$")
+  .def("getDimension", &NLP::getDimension, "return the dimensionality of $x$")
 
-  .def("getBounds", [](std::shared_ptr<MathematicalProgram>& self){
+  .def("getBounds", [](std::shared_ptr<NLP>& self){
     arr lo,up;
     self->getBounds(lo, up);
     return std::tuple<arr,arr>(lo, up);
@@ -48,12 +44,12 @@ void init_Optim(pybind11::module& m) {
   "returns the tuple $(b_{lo},b_{up})$, where both vectors are of same dimensionality of $x$ (or size zero, if there are no bounds)")
 
   .def("getInitializationSample",
-       &MathematicalProgram::getInitializationSample,
+       &NLP::getInitializationSample,
        "returns a sample (e.g. uniform within bounds) to initialize an optimization -- not necessarily feasible",
        pybind11::arg("previousOptima") = arr()
       )
 
-  .def("getFHessian",  [](std::shared_ptr<MathematicalProgram>& self, const arr& x){
+  .def("getFHessian",  [](std::shared_ptr<NLP>& self, const arr& x){
     arr H;
     self->getFHessian(H, x);
     return H;
@@ -61,7 +57,7 @@ void init_Optim(pybind11::module& m) {
   "returns Hessian of the sum of $f$-terms"
   )
 
-  .def("report",  [](std::shared_ptr<MathematicalProgram>& self, int verbose){
+  .def("report",  [](std::shared_ptr<NLP>& self, int verbose){
     rai::String str;
     self->report(str, verbose);
     return std::string(str.p);
@@ -93,7 +89,7 @@ void init_Optim(pybind11::module& m) {
   //===========================================================================
 
   //  pybind11::module_ mBench = m.def_submodule("nlp_benchmark", "ry submodule to define optimization benchmarks");
-//  pybind11::class_<MathematicalProgram, shared_ptr<MathematicalProgram>>(m, "MathematicalProgram")
+//  pybind11::class_<NLP, shared_ptr<NLP>>(m, "NLP")
 
   pybind11::class_<OptBench_InvKin_Endeff, std::shared_ptr<OptBench_InvKin_Endeff>>(m, "OptBenchmark_InvKin_Endeff")
       .def(pybind11::init<const char*, bool>())
@@ -121,13 +117,9 @@ void init_Optim(pybind11::module& m) {
 
       .def(pybind11::init<>())
 //      .def("setProblem", &NLP_Solver::setProblem)
-      .def("setProblem", [](std::shared_ptr<NLP_Solver>& self, std::shared_ptr<MathematicalProgram>& P){
-         self->setProblem(*P);
-      } )
+      .def("setProblem", &NLP_Solver::setProblem)
       .def("setSolver", &NLP_Solver::setSolver)
 
-      .def("getOptions", &NLP_Solver::getOptions)
-      .def("setOptions", &NLP_Solver::setOptions)
       .def("setTracing", &NLP_Solver::setTracing)
       .def("solve", &NLP_Solver::solve)
 

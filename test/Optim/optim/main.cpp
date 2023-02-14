@@ -1,38 +1,53 @@
 #include <Optim/optimization.h>
 #include <Optim/benchmarks.h>
 #include <functional>
-#include <Optim/solver.h>
+#include <Optim/NLP_Solver.h>
+#include <Optim/lagrangian.h>
+#include <Optim/constrained.h>
 
-void TEST(SqrProblem) {
-  const ScalarFunction& _f = ChoiceFunction();
+//===========================================================================
 
-  uint dim=rai::getParameter<double>("dim");
+void TEST(Display) {
+  std::shared_ptr<NLP> nlp = getBenchmarkFromCfg();
 
-  Conv_ScalarProblem_MathematicalProgram _nlp(_f, dim);
-  _nlp.setBounds(-2., 2.);
-  MathematicalProgram_Traced nlp(_nlp);
-  Conv_MathematicalProgram_ScalarProblem f(nlp);
+  NLP_Viewer(nlp).display();
 
-  displayFunction(f, true);
+  rai::wait();
+}
 
-  arr x(dim),x0;
-  rndUniform(x,-1.,1.,false);
-  x0=x;
+//===========================================================================
 
-  checkGradient(f, x, 1e-3);
-  checkHessian (f, x, 1e-3);
+void TEST(Solver) {
+  std::shared_ptr<NLP> nlp = getBenchmarkFromCfg();
 
+  NLP_Viewer(nlp).display();
+  rai::wait();
+
+//  arr x = nlp->getInitializationSample();
+//  checkJacobianCP(*nlp, x, 1e-4);
+
+  arr x_init = rai::getParameter<arr>("x_init", {});
   NLP_Solver S;
 
   rai::Enum<NLP_SolverID> sid (rai::getParameter<rai::String>("solver"));
   S.setSolver(sid);
   S.setProblem(nlp);
-  S.setInitialization({1., 1.});
-  S.solve();
+  if(x_init.N) S.setInitialization(x_init);
+  if(sid==NLPS_augmentedLag || sid==NLPS_squaredPenalty || sid==NLPS_logBarrier){
+    while(!S.step()){
+      NLP_Viewer(nlp, S.P). display(S.optCon->L.mu);
+      rai::wait(.1);
+    }
+  }else{
+    S.solve();
+  }
 
   arr path = catCol(S.getTrace_x(), S.getTrace_costs());
-  path.writeRaw(FILE("z.path"));
-  gnuplot("load 'plt'", false, true);
+  FILE("z.path") <<path.modRaw();
+
+  NLP_Viewer(nlp, S.P). display();
+  // displayNLP(nlp, S.getTrace_x(), S.getTrace_costs());
+//  gnuplot("load 'plt'", false, false);
   rai::wait();
 }
 
@@ -43,7 +58,8 @@ int MAIN(int argc,char** argv){
 
   rnd.clockSeed();
 
-  testSqrProblem();
+//  testDisplay();
+  testSolver();
 
   return 0;
 }

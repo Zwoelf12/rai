@@ -17,6 +17,7 @@
 #include "../Gui/opengl.h"
 #include "../Algo/SplineCtrlFeed.h"
 
+#include <iomanip>
 //#define BACK_BRIDGE
 
 namespace rai {
@@ -69,6 +70,7 @@ struct SimulationImp {
 
 struct Imp_CloseGripper : SimulationImp {
   Frame* gripper, *fing1, *fing2, *obj, *finger1, *finger2;
+  arr limits;
   std::unique_ptr<F_PairCollision> coll1;
   std::unique_ptr<F_PairCollision> coll2;
   double q;
@@ -82,6 +84,7 @@ struct Imp_CloseGripper : SimulationImp {
 
 struct Imp_OpenGripper : SimulationImp {
   Frame* gripper, *fing1, *fing2;
+  arr limits;
   double q;
   double speed;
 
@@ -108,6 +111,13 @@ struct Imp_BlockJoints : SimulationImp {
   Imp_BlockJoints(const FrameL& _joints, Simulation& S);
   virtual void modConfiguration(Simulation& S, double tau);
 };
+//===========================================================================
+
+struct Imp_NoPenetrations : SimulationImp {
+  Imp_NoPenetrations() {when = _beforePhysics;};
+  virtual void modConfiguration(Simulation& S, double tau);
+};
+
 
 //===========================================================================
 
@@ -120,7 +130,7 @@ Simulation::Simulation(Configuration& _C, Simulation::SimulatorEngine _engine, i
   if(engine==_physx) {
     self->physx = make_shared<PhysXInterface>(C, verbose-1);
   } else if(engine==_bullet) {
-    self->bullet = make_shared<BulletInterface>(C, verbose-1);
+    self->bullet = make_shared<BulletInterface>(C, rai::Bullet_Options().set_verbose(verbose-1));
 #ifdef BACK_BRIDGE
     self->bulletBridge = make_shared<BulletBridge>(self->bullet->getDynamicsWorld());
     self->bulletBridge->getConfiguration(self->bridgeC);
@@ -145,7 +155,7 @@ void Simulation::step(const arr& u_control, double tau, ControlMode u_mode) {
   arr ucontrol = u_control; //a copy to allow for perturbations
 
   //-- imps before control
-  for(ptr<SimulationImp>& imp : imps) if(imp->when==SimulationImp::_beforeControl) {
+  for(shared_ptr<SimulationImp>& imp : imps) if(imp->when==SimulationImp::_beforeControl) {
       imp->modControl(*this, ucontrol, tau, u_mode);
     }
 
@@ -156,16 +166,29 @@ void Simulation::step(const arr& u_control, double tau, ControlMode u_mode) {
     C.setJointState(ucontrol);
   } else if(u_mode==_velocity) {
     arr q = C.getJointState();
-    q += tau * ucontrol;
+    qDot = ucontrol;
+    q += tau * qDot;
+    C.setJointState(q);
+  } else if(u_mode==_pdRef) {
+    ucontrol.reshape(2,-1);
+//    C.setJointState(ucontrol[0]);
+//    qDot = ucontrol[1];
+  } else if(u_mode==_acceleration) {
+    arr q = C.getJointState();
+    if(!qDot.N) qDot = zeros(q.N);
+    q += .5 * tau * qDot;
+    qDot += tau * ucontrol;
+    q += .5 * tau * qDot;
     C.setJointState(q);
   } else if(u_mode==_spline) {
     arr q = C.getJointState();
-    self->ref.getReference(q, NoArr, NoArr, q, NoArr, time);
+    if(!qDot.N) qDot = zeros(q.N);
+    self->ref.getReference(q, qDot, NoArr, q, qDot, time);
     C.setJointState(q);
   } else NIY;
 
   //-- imps before physics
-  for(ptr<SimulationImp>& imp : imps) if(imp->when==SimulationImp::_beforePhysics) {
+  for(shared_ptr<SimulationImp>& imp : imps) if(imp->when==SimulationImp::_beforePhysics) {
       imp->modConfiguration(*this, tau);
     }
 
@@ -175,9 +198,10 @@ void Simulation::step(const arr& u_control, double tau, ControlMode u_mode) {
     self->physx->step(tau);
     self->physx->pullDynamicStates(C.frames, self->frameVelocities);
   } else if(engine==_bullet) {
-    self->bullet->pushKinematicStates(C.frames);
+    self->bullet->pushKinematicStates(C);
+    if(self->bullet->opt().multiBody) self->bullet->setMotorQ(ucontrol[0], ucontrol[1]); //C.getJointState(), qDot);
     self->bullet->step(tau);
-    self->bullet->pullDynamicStates(C.frames, self->frameVelocities);
+    self->bullet->pullDynamicStates(C); //, self->frameVelocities);
 #ifdef BACK_BRIDGE
     self->bulletBridge->pullPoses(self->bridgeC, true);
     self->bridgeC.watch(false, "bullet bridge");
@@ -186,7 +210,7 @@ void Simulation::step(const arr& u_control, double tau, ControlMode u_mode) {
   } else NIY;
 
   //-- imps after physics
-  for(ptr<SimulationImp>& imp : imps) if(imp->when==SimulationImp::_afterPhysics) {
+  for(shared_ptr<SimulationImp>& imp : imps) if(imp->when==SimulationImp::_afterPhysics) {
       imp->modConfiguration(*this, tau);
     }
 
@@ -194,9 +218,18 @@ void Simulation::step(const arr& u_control, double tau, ControlMode u_mode) {
 }
 
 void Simulation::setMoveTo(const arr& x, double t, bool append){
+  arr path = x;
+  if(x.nd==1) path.reshape(1,x.d0);
 
-  if(append) self->ref.append(~x, {t}, time, true);
-  else self->ref.overrideSmooth(~x, {t}, time);
+  arr times = {t};
+  if(x.nd==2) times.setGrid(1, t/(x.d0), t, x.d0-1);
+
+  if(append) self->ref.append(path, times, time, true);
+  else self->ref.overrideSmooth(path, times, time);
+}
+
+void Simulation::move(const arr& path, const arr& t){
+  self->ref.append(path, t, time, true);
 }
 
 bool getFingersForGripper(rai::Frame*& gripper, rai::Frame*& fing1, rai::Frame*& fing2, rai::Configuration& C, const char* gripperFrameName) {
@@ -206,23 +239,22 @@ bool getFingersForGripper(rai::Frame*& gripper, rai::Frame*& fing1, rai::Frame*&
     gripper=fing1=fing2=0;
     return false;
   }
-  rai::Frame* handLink = gripper->getUpwardLink();
+  gripper = gripper->getUpwardLink();
   //browse all children of the gripper and find by name
   FrameL F;
-  handLink->getSubtree(F);
+  gripper->getSubtree(F);
   for(rai::Frame* f:F){
-    if(f->name.endsWith("finger1")) fing1=f->parent;
-    if(f->name.endsWith("finger2")) fing2=f->parent;
+    if(f->name.endsWith("finger1")) fing1=f;
+    if(f->name.endsWith("finger2")) fing2=f;
   }
-#if 0
-  fing1 = fing1->getUpwardLink();
-  fing2 = fing2->getUpwardLink();
-
-  CHECK(fing1->joint, "");
-  CHECK(fing2->joint, "");
-  CHECK(!fing1->joint->active || !fing1->joint->dim, ""); //grippers need to be rigid joints! (to not be part of the dynamic/control system)
-  CHECK(!fing2->joint->active || !fing2->joint->dim, "");
-#endif
+  fing1 = fing1->parent;
+  fing2 = fing2->parent;
+//  fing1 = fing1->getUpwardLink();
+//  fing2 = fing2->getUpwardLink();
+//  CHECK(fing1->joint, "");
+//  CHECK(fing2->joint, "");
+//  CHECK(!fing1->joint->active || !fing1->joint->dim, ""); //grippers need to be rigid joints! (to not be part of the dynamic/control system)
+//  CHECK(!fing2->joint->active || !fing2->joint->dim, "");
 
   //requirement: two of the children of need to be the finger geometries
 //  fing1 = gripper->children(0); while(!fing1->shape && fing1->children.N) fing1 = fing1->children(0);
@@ -241,8 +273,7 @@ void Simulation::openGripper(const char* gripperFrameName, double width, double 
   }
 
   //check if an object is attached
-  rai::Frame* obj = 0;
-  if(gripper->children.N) obj = gripper->children(-1);
+  rai::Frame* obj = gripper->children(-1);
   if(!obj || !obj->joint || obj->joint->type != rai::JT_rigid) {
     if(verbose>1) {
       LOG(1) <<"gripper '" <<gripper->name <<"' does not hold an object";
@@ -253,6 +284,7 @@ void Simulation::openGripper(const char* gripperFrameName, double width, double 
   //reattach object to world frame, and make it physical
   if(obj) {
     C.attach(C.frames(0), obj);
+    obj->inertia->type = BT_dynamic;
     if(engine==_physx) {
       self->physx->changeObjectType(obj, rai::BT_dynamic);
     } else {
@@ -287,7 +319,7 @@ void Simulation::closeGripper(const char* gripperFrameName, double width, double
   }
 
   //intersect
-  FrameL objs = setSection(fing1close, fing2close);
+  FrameL objs = rai::setSection(fing1close, fing2close);
 //  cout <<"initiating ";
 //  listWrite(objs);
 //  cout <<endl;
@@ -316,12 +348,24 @@ void Simulation::closeGripper(const char* gripperFrameName, double width, double
   imps.append(make_shared<Imp_CloseGripper>(gripper, fing1, fing2, obj, speed));
 }
 
-ptr<SimulationState> Simulation::getState() {
+void Simulation::closeGripperGrasp(const char* gripperFrameName, const char* objectName, double width, double speed, double force){
+  rai::Frame* gripper, *fing1, *fing2;
+  getFingersForGripper(gripper, fing1, fing2, C, gripperFrameName);
+  if(!gripper) return;
+
+  rai::Frame *finger1 = fing1, *finger2=fing2;
+  while(!finger1->shape || finger1->shape->type()!=ST_capsule) finger1=finger1->children.last();
+  while(!finger2->shape || finger2->shape->type()!=ST_capsule) finger2=finger2->children.last();
+
+  imps.append(make_shared<Imp_CloseGripper>(gripper, fing1, fing2, C.getFrame(objectName), speed));
+}
+
+shared_ptr<SimulationState> Simulation::getState() {
   arr qdot;
   if(engine==_physx) {
     self->physx->pullDynamicStates(C.frames, qdot);
   } else if(engine==_bullet) {
-    self->bullet->pullDynamicStates(C.frames, qdot);
+    self->bullet->pullDynamicStates(C, qdot);
   } else NIY;
   return make_shared<SimulationState>(C.getFrameState(), qdot);
 }
@@ -335,7 +379,7 @@ void Simulation::pushConfigurationToSimulator(const arr& frameVelocities) {
   if(engine==_physx) {
     self->physx->pushFullState(C.frames, frameVelocities);
   } else if(engine==_bullet) {
-    self->bullet->pushFullState(C.frames, frameVelocities);
+    self->bullet->pushFullState(C, frameVelocities);
   } else NIY;
 }
 
@@ -348,7 +392,7 @@ void Simulation::registerNewObjectWithEngine(Frame* f) {
   } else NIY;
 }
 
-void Simulation::restoreState(const ptr<SimulationState>& state) {
+void Simulation::restoreState(const shared_ptr<SimulationState>& state) {
   setState(state->frameState, state->frameVels);
 }
 
@@ -408,6 +452,8 @@ void Simulation::addImp(Simulation::ImpType type, const StringA& frames, const a
     FrameL F = C.getFrames(frames);
     auto block = make_shared<Imp_BlockJoints>(F, *this);
     imps.append(block);
+  } else if(type==_noPenetrations){
+    imps.append(make_shared<Imp_NoPenetrations>());
   } else {
     NIY;
   }
@@ -419,7 +465,7 @@ void Simulation::getImageAndDepth(byteA& image, floatA& depth) {
   cameraview().computeImageAndDepth(image, depth);
 
   //-- imps after images
-  for(ptr<SimulationImp>& imp : imps) if(imp->when==SimulationImp::_afterImages) {
+  for(shared_ptr<SimulationImp>& imp : imps) if(imp->when==SimulationImp::_afterImages) {
       imp->modImages(*this, image, depth);
     }
 
@@ -427,7 +473,32 @@ void Simulation::getImageAndDepth(byteA& image, floatA& depth) {
 }
 
 //===========================================================================
+//added-------------------------
+struct MoveBallHereCallback:OpenGL::GLClickCall {
 
+  MoveBallHereCallback() { }
+  bool clickCallback(OpenGL& gl) {
+    if(gl.mouse_button==1 && gl.mouseIsDown)
+    {
+      float d = gl.captureDepth(gl.mouseposy, gl.mouseposx);
+      arr x = {double(gl.mouseposy), double(gl.mouseposy), d};
+//      cout <<" image coords: " <<x;
+      if(d<.01 || d==1.) {
+        cout <<"NO SELECTION: SELECTION DEPTH = " <<d <<' ' <<gl.camera.glConvertToTrueDepth(d) <<endl;
+      } else {
+        cout <<"pixel coords and depth " <<x <<endl;
+        gl.camera.unproject_fromPixelsAndGLDepth(x, gl.width, gl.height);
+      }
+
+      cout << "translation in world coords is " <<x <<endl;
+
+
+    }  
+   
+    return true;
+  }
+};
+//-------------------------
 struct Simulation_DisplayThread : Thread, GLDrawer {
   Configuration Ccopy;
   OpenGL gl;
@@ -438,6 +509,7 @@ struct Simulation_DisplayThread : Thread, GLDrawer {
   floatA depth;
   byteA segmentation;
   byteA screenshot;
+  uint pngCount=0;
 
   Simulation_DisplayThread(const Configuration& C)
     : Thread("Sim_DisplayThread", .05),
@@ -445,6 +517,11 @@ struct Simulation_DisplayThread : Thread, GLDrawer {
       gl("Simulation Display") {
     gl.add(*this);
     gl.camera.setDefault();
+    gl.addClickCall(new MoveBallHereCallback());///added
+    gl.drawOptions.drawVisualsOnly=true;
+
+    if(Ccopy.getFrame("camera_gl",false)) gl.camera.X = Ccopy["camera_gl"]->ensure_X();
+
     threadLoop();
     while(step_count<2) rai::wait(.05);
   }
@@ -456,6 +533,7 @@ struct Simulation_DisplayThread : Thread, GLDrawer {
 
   void step() {
     gl.update(STRING("t:" <<time), true);
+    //write_png(gl.captureImage, STRING("z.vid/"<<std::setw(4)<<std::setfill('0')<<(pngCount++)<<".png"));
   }
 
   void glDraw(OpenGL& gl) {
@@ -503,7 +581,7 @@ void Simulation_self::updateDisplayData(double _time, const rai::Configuration& 
     display->Ccopy.copy(_C, false);
     //deep copy meshes!
     for(rai::Frame* f:display->Ccopy.frames) if(f->shape) {
-        ptr<Mesh> org = f->shape->_mesh;
+        shared_ptr<Mesh> org = f->shape->_mesh;
         f->shape->_mesh = make_shared<Mesh> (*org.get());
       }
   }
@@ -546,6 +624,8 @@ Imp_CloseGripper::Imp_CloseGripper(Frame* _gripper, Frame* _fing1, Frame* _fing2
     coll2->setFrameIDs({finger2->ID, obj->ID});
   }
 
+//  CHECK(!fing1->joint->active || !fing1->joint->dim, "");
+  limits = fing1->ats->get<arr>("limits");
   q = fing1->get_Q().pos.x;
 }
 
@@ -563,26 +643,26 @@ void Imp_CloseGripper::modConfiguration(Simulation& S, double tau) {
   fing1->set_Q()->pos.set(q, 0., 0.);
   fing2->set_Q()->pos.set(q, 0., 0.);
 
-  if(q<fing1->ats->get<arr>("limits")(0)) { //stop grasp by joint limits -> unsuccessful
+  if(q<limits(0)) { //stop grasp by joint limits -> unsuccessful
     if(S.verbose>1) {
       LOG(1) <<"terminating closing gripper (limit) - nothing grasped";
     }
     killMe = true;
   } else if(obj) {
     //      step({}, .01, _none);
-    auto d1 = coll1->eval(coll1->getFrames(S.C));
-    auto d2 = coll2->eval(coll2->getFrames(S.C));
-    //  cout <<q <<" d1: " <<d1.y <<"d2: " <<d2.y <<endl;
-    if(-d1.y(0)<1e-3 && -d2.y(0)<1e-3) { //stop grasp by contact
+    double d1 = -coll1->eval(coll1->getFrames(S.C)).scalar();
+    double d2 = -coll2->eval(coll2->getFrames(S.C)).scalar();
+    //  cout <<q <<" d1: " <<d1 <<"d2: " <<d2 <<endl;
+    if(d1< -5e-3 && d2< -5e-3) { //stop grasp by penetration
       //evaluate stability
       F_GraspOppose oppose;
-      arr y;
-      oppose.eval(y, NoArr, {finger1, finger2, obj});
+      arr y = oppose.eval({finger1, finger2, obj});
 
       if(sumOfSqr(y) < 0.1) { //good enough -> success!
         // kinematically attach object to gripper
         obj = obj->getUpwardLink();
         S.C.attach(gripper, obj);
+        obj->inertia->type = BT_kinematic;
 
         // tell engine that object is now kinematic, not dynamic
         if(S.engine==S._physx) {
@@ -614,6 +694,8 @@ Imp_OpenGripper::Imp_OpenGripper(Frame* _gripper, Frame* _fing1, Frame* _fing2, 
   when = _beforePhysics;
   type = Simulation::_openGripper;
 
+//  CHECK(!fing1->joint->active || !fing1->joint->dim, "");
+  limits = fing1->ats->get<arr>("limits");
   q = fing1->get_Q().pos.x;
 }
 
@@ -628,7 +710,7 @@ void Imp_OpenGripper::modConfiguration(Simulation& S, double tau) {
   q += 1e-1*speed*tau;
   fing1->set_Q()->pos.set(q, 0., 0.);
   fing2->set_Q()->pos.set(q, 0., 0.);
-  if(q > fing1->ats->get<arr>("limits")(1)) { //stop opening
+  if(q > limits(1)) { //stop opening
     if(S.verbose>1) {
       LOG(1) <<"terminating opening gripper " <<gripper->name;
     }
@@ -679,6 +761,65 @@ void Imp_BlockJoints::modConfiguration(Simulation& S, double tau) {
     q(j->qIndex) = qBlocked(i);
   }
   S.C.setJointState(q);
+}
+
+void Imp_NoPenetrations::modConfiguration(Simulation& S, double tau){
+
+  uintA dynamicFrames;
+  for(rai::Frame* f: S.C.getLinks()) {
+    if(f->inertia)
+        if(f->inertia->type == rai::BT_dynamic) {
+            FrameL parts = {f};
+            f->getRigidSubFrames(parts);
+            for(rai::Frame* p: parts) dynamicFrames.append(p->ID);
+//            cout << f->name.p << endl;
+        }
+  }
+
+  for(uint t=0;t<100;t++){
+
+    arr y, J;
+    S.C.kinematicsZero(y, J, 1);
+
+    // Check penetrations between robot vs. static objects
+    S.C.stepSwift();
+    for(rai::Proxy& p: S.C.proxies){
+      if(!(dynamicFrames.contains(p.a->ID) || dynamicFrames.contains(p.b->ID))) {
+        if(p.d > p.a->shape->radius() + p.b->shape->radius() + .01) continue;
+        if(!p.collision) p.calc_coll();
+        if(p.collision->getDistance()>0.) continue;
+
+        arr Jp1, Jp2;
+        p.a->C.jacobian_pos(Jp1, p.a, p.collision->p1);
+        p.b->C.jacobian_pos(Jp2, p.b, p.collision->p2);
+
+        arr y_dist, J_dist;
+        p.collision->kinDistance(y_dist, J_dist, Jp1, Jp2);
+
+        if(y_dist.scalar()>0.) continue;
+        y -= y_dist.scalar();
+        J -= J_dist;
+      }
+    }
+
+
+    // Resolve penetration
+    arr q = S.C.getJointState();
+//    q -= 0.3*pseudoInverse(J, NoArr, 1e-2) * y;
+//    q -= 0.3*inverse((~J)*J+1e-2*eye(q.d0)) * (~J) * y;
+
+    arr vel = (~J) * y;
+    q -= 0.3*vel; //the above two cause an unknown error (only) in rai-python... why?
+    S.C.setJointState(q);
+    if(length(vel) < 1e-3) return;
+  }
+
+}
+
+//===========================================================================
+
+uint& Simulation::pngCount(){
+  return self->display->pngCount;
 }
 
 } //namespace rai

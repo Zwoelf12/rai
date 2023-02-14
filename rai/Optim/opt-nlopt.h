@@ -5,18 +5,16 @@
     This code is distributed under the MIT License.
     Please see <root-path>/LICENSE for details.
     --------------------------------------------------------------  */
+#pragma once
 
-#include "MathematicalProgram.h"
+#include "NLP.h"
 
 struct NLoptInterface {
-  MathematicalProgram& P;
+  shared_ptr<NLP> P;
   arr x, phi_x, J_x;
-  ObjectiveTypeA featureTypes;
   int verbose=1;
 
-  NLoptInterface(MathematicalProgram& _P) : P(_P) {
-    P.getFeatureTypes(featureTypes);
-  }
+  NLoptInterface(const shared_ptr<NLP>& _P) : P(_P) {}
 
   arr solve(const arr& x_init=NoArr);
 

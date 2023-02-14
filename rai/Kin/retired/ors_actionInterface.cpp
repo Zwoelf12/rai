@@ -12,7 +12,7 @@
 #include "kin_ode.h"
 #include "kin_actionInterface.h"
 #include "../Gui/opengl.h"
-#include "../Plot/plot.h"
+#include "../Gui/plot.h"
 
 #include <sstream>
 #include <limits.h>
@@ -720,7 +720,7 @@ void ActionInterface::indicateFailure() {
     NIY;
     //C->del_edge(e); //otherwise: no object in hand
   }
-  std::cerr <<"ActionInterface: CONTROL FAILURE" <<endl;
+  cerr <<"ActionInterface: CONTROL FAILURE" <<endl;
   relaxPosition();
 }
 

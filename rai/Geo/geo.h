@@ -9,6 +9,9 @@
 #pragma once
 
 #include "../Core/array.h"
+#include "../Core/graph.h"
+
+#include <iostream>
 
 namespace rai {
 
@@ -75,6 +78,7 @@ struct Matrix {
   void setZero();
   void setRandom(double range=1.);
   void setId();
+  void setDiag(const arr& diag);
   void setFrame(Vector&, Vector&, Vector&);
   void setInvFrame(Vector&, Vector&, Vector&);
   void setXrot(double);
@@ -84,6 +88,8 @@ struct Matrix {
   void setTensorProduct(const Vector&, const Vector&);
 
   double diffZero() const;
+
+  bool isDiagonal() const { return !m01 && !m02 && !m10 && !m12 && !m20 && !m21; }
 
   void write(std::ostream&) const;
   void read(std::istream&);
@@ -113,9 +119,9 @@ struct Quaternion {
   void setRad(double radians, double axis0, double axis1, double axis2);
   void setRad(double radians, const Vector& axis);
   void setRad(double angle);
-  void setRadX(double angle);
-  void setRadY(double angle);
-  void setRadZ(double angle);
+  void setRadX(double radians);
+  void setRadY(double radians);
+  void setRadZ(double radians);
   Quaternion& setRpy(double r, double p, double y);
   void setVec(Vector w);
   void setMatrix(double* m);
@@ -154,8 +160,11 @@ struct Quaternion {
   double* getMatrix(double* m) const;
   double* getMatrixOde(double* m) const; //in Ode foramt: 3x4 memory storae
   double* getMatrixGL(double* m) const;  //in OpenGL format: transposed 4x4 memory storage
+  double getRoll_X() const;
+  double getPitch_Y() const;
+  double getYaw_Z() const;
   arr getEulerRPY() const;
-  void applyOnPointArray(arr& pts);
+  void applyOnPointArray(arr& pts) const;
 
   arr getJacobian() const;
   arr getMatrixJacobian() const;
@@ -191,6 +200,7 @@ struct Transformation {
   Transformation& setRandom();
   void setInverse(const Transformation& f);
   void setDifference(const Transformation& from, const Transformation& to);
+  void setInterpolate(double t, const Transformation& a, const Transformation b);
   void setAffineMatrix(const double* m);
 
   bool isZero() const;
@@ -232,7 +242,7 @@ struct DynamicTransformation : Transformation {
   DynamicTransformation() {}
   DynamicTransformation(int zero) { CHECK_EQ(zero, 0, "this is only for initialization with zero"); setZero(); }
   DynamicTransformation(const DynamicTransformation& t) : Transformation(t), vel(t.vel), angvel(t.angvel), zeroVels(t.zeroVels) {}
-  DynamicTransformation(const char* init) { read(rai::String(init).stream()); }
+  DynamicTransformation(const char* init);
 
   DynamicTransformation& setZero();
   DynamicTransformation& setText(const char* txt);
@@ -304,7 +314,8 @@ struct Camera {
   //retired
   void setCameraProjectionMatrix(const arr& P); //P is in standard convention -> computes fixedProjectionMatrix in OpenGL convention from this
 
-  void report(ostream& os=cout);
+  void read(Graph& ats);
+  void report(std::ostream& os=std::cout);
 };
 
 //===========================================================================
@@ -364,15 +375,15 @@ Quaternion operator-(const Quaternion&, const Quaternion&);
 // TRANSFORMATION
 Transformation operator-(const Transformation&);
 Transformation operator*(const Transformation& b, const Transformation& c);
-Transformation operator/(const Transformation& b, const Transformation& c);
+Transformation operator/(const Transformation& to, const Transformation& from);
 bool           operator==(const Transformation&, const Transformation&);
 bool           operator!=(const Transformation&, const Transformation&);
 
 // MIXED
 Vector operator*(const Quaternion& b, const Vector& c);
-Vector operator/(const Quaternion& b, const Vector& c);
+Vector operator/(const Vector& c, const Quaternion& b);
 Vector operator*(const Transformation& b, const Vector& c);
-Vector operator/(const Transformation& b, const Vector& c);
+Vector operator/(const Vector& c, const Transformation& b);
 
 std::istream& operator>>(std::istream&, Vector&);
 std::istream& operator>>(std::istream&, Matrix&);

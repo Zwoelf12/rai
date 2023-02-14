@@ -18,11 +18,11 @@ TaskControlMethods::TaskControlMethods(const arr& _Hmetric)
   : Hmetric(_Hmetric) { //rai::getParameter<double>("Hrate", .1)*world.getHmetric()) {
 }
 
-CtrlObjective* TaskControlMethods::addPDTask(CtrlObjectiveL& tasks, const char* name, double decayTime, double dampingRatio, ptr<Feature> feat) {
+CtrlObjective* TaskControlMethods::addPDTask(CtrlObjectiveL& tasks, const char* name, double decayTime, double dampingRatio, shared_ptr<Feature> feat) {
   return tasks.append(new CtrlObjective(name, feat, decayTime, dampingRatio, 1., 1.));
 }
 
-//ptr<CtrlObjective> TaskControlMethods::addPDTask(const char* name,
+//shared_ptr<CtrlObjective> TaskControlMethods::addPDTask(const char* name,
 //                                         double decayTime, double dampingRatio,
 //                                         TM_DefaultType type,
 //                                         const char* iShapeName, const rai::Vector& ivec,
@@ -385,7 +385,7 @@ void TaskControlMethods::calcForceControl(CtrlObjectiveL& tasks, arr& K_ft, arr&
   uint nForceTasks=0;
   for(CtrlObjective* task : tasks) if(task->active && task->f_ref.N) {
       nForceTasks++;
-      ptr<TM_Default> feat = std::dynamic_pointer_cast<TM_Default>(task->feat);
+      shared_ptr<TM_Default> feat = std::dynamic_pointer_cast<TM_Default>(task->feat);
       rai::Frame* body = world.frames(feat->i);
       rai::Frame* lFtSensor = world.getFrameByName("r_ft_sensor");
       arr y, J, J_ft;
@@ -400,7 +400,7 @@ void TaskControlMethods::calcForceControl(CtrlObjectiveL& tasks, arr& K_ft, arr&
   CHECK_LE(nForceTasks, 1, "Multiple force laws not allowed at the moment");
   if(!nForceTasks) {
     K_ft = zeros(world.getJointStateDimension());
-    fRef = ARR(0.0);
+    fRef = arr{0.0};
     J_ft_inv = zeros(1, 6);
     gamma = 0.0;
   }
@@ -414,7 +414,7 @@ TaskControlMethods::TaskControlMethods(const arr& _Hmetric)
   : Hmetric(_Hmetric) { //rai::getParameter<double>("Hrate", .1)*world.getHmetric()) {
 }
 
-CtrlObjective* TaskControlMethods::addPDTask(CtrlObjectiveL& tasks, const char* name, double decayTime, double dampingRatio, ptr<Feature> feat) {
+CtrlObjective* TaskControlMethods::addPDTask(CtrlObjectiveL& tasks, const char* name, double decayTime, double dampingRatio, shared_ptr<Feature> feat) {
   NIY
 }
 
@@ -432,7 +432,7 @@ arr TaskControlMethods::inverseKinematics(const rai::Configuration& pathConfig, 
   for(auto& t: tasks) {
     if(t->active) {
 //      if(t->ref->y_ref.N) {
-      t->feat->eval(t_y, t_J, t->feat->getFrames(pathConfig));
+      NIY; //t->feat->eval(t_y, t_J, t->feat->getFrames(pathConfig));
       y.append(-t_y);
       J.append(t_J);
 //      }
@@ -548,7 +548,7 @@ void TaskControlMethods::calcForceControl(CtrlObjectiveL& tasks, arr& K_ft, arr&
 
 #endif
 
-CtrlProblem_MathematicalProgram::CtrlProblem_MathematicalProgram(CtrlSolver& _CP)
+CtrlProblem_NLP::CtrlProblem_NLP(CtrlSolver& _CP)
   : CP(_CP) {
   for(uint k=0; k<2; k++) {
     rai::Configuration* C = Ctuple.append(new rai::Configuration());
@@ -559,11 +559,11 @@ CtrlProblem_MathematicalProgram::CtrlProblem_MathematicalProgram(CtrlSolver& _CP
   }
 }
 
-uint CtrlProblem_MathematicalProgram::getDimension() {
+uint CtrlProblem_NLP::getDimension() {
   return CP.komo.world.getJointStateDimension();
 }
 
-void CtrlProblem_MathematicalProgram::getBounds(arr& bounds_lo, arr& bounds_up) {
+void CtrlProblem_NLP::getBounds(arr& bounds_lo, arr& bounds_up) {
   arr limits = ~CP.komo.world.getLimits();
   bounds_lo = limits[0];
   bounds_up = limits[1];
@@ -581,27 +581,27 @@ void CtrlProblem_MathematicalProgram::getBounds(arr& bounds_lo, arr& bounds_up) 
   }
 }
 
-void CtrlProblem_MathematicalProgram::getFeatureTypes(ObjectiveTypeA& featureTypes) {
+void CtrlProblem_NLP::getFeatureTypes(ObjectiveTypeA& featureTypes) {
   for(auto& o: CP.objectives) if(o->active) {
     uint d = o->feat->dim(o->feat->getFrames(CP.komo.world));
-    featureTypes.append(consts<ObjectiveType>(o->type, d));
+    featureTypes.append(o->type, d);
   }
   dimPhi = featureTypes.N;
 }
 
-void CtrlProblem_MathematicalProgram::getNames(StringA& variableNames, StringA& featureNames) {
+void CtrlProblem_NLP::getNames(StringA& variableNames, StringA& featureNames) {
   variableNames = CP.komo.world.getJointNames();
   for(auto& o: CP.objectives) if(o->active) {
     uint d = o->feat->dim(o->feat->getFrames(CP.komo.world));
-    featureNames.append(consts<rai::String>(o->name, d));
+    featureNames.append(o->name, d);
   }
 }
 
-arr CtrlProblem_MathematicalProgram::getInitializationSample(const arr& previousOptima) {
+arr CtrlProblem_NLP::getInitializationSample(const arr& previousOptima) {
   NIY;
 }
 
-void CtrlProblem_MathematicalProgram::evaluate(arr& phi, arr& J, const arr& x) {
+void CtrlProblem_NLP::evaluate(arr& phi, arr& J, const arr& x) {
   Ctuple(-1)->setJointState(x);
   Ctuple(-1)->stepSwift();
 
@@ -659,16 +659,16 @@ void CtrlProblem_MathematicalProgram::evaluate(arr& phi, arr& J, const arr& x) {
 }
 
 arr solve_optim(CtrlSolver& CP) {
-  auto MP = make_shared<CtrlProblem_MathematicalProgram>(CP);
+  auto nlp = make_shared<CtrlProblem_NLP>(CP);
 
   arr x = CP.komo.world.getJointState();
-  OptOptions opt;
+  rai::OptOptions opt;
   opt.stopTolerance = 1e-4;
   opt.stopGTolerance = 1e-4;
   opt.stopIters = 10;
 //  opt.nonStrictSteps=-1;
-  OptConstrained O(x, NoArr, *MP, opt);
-  MP->getBounds(O.newton.bounds_lo, O.newton.bounds_up);
+  OptConstrained O(x, NoArr, nlp, opt);
+  nlp->getBounds(O.newton.bounds_lo, O.newton.bounds_up);
   O.run();
   return x;
 }

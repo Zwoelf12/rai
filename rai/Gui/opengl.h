@@ -11,6 +11,7 @@
 #include "../Core/array.h"
 #include "../Core/thread.h"
 #include "../Geo/geo.h"
+
 #include <functional>
 
 #ifdef RAI_FLTK
@@ -57,6 +58,7 @@ void glStandardOriginAxes(void*, OpenGL&);
 void glColor(float r, float g, float b, float a=1.f);
 void glColor(int col);
 void glColor(const arr& col);
+void glColorId(uint id);
 void id2color(byte rgb[3], uint id);
 arr id2color(uint id);
 uint color2id(byte rgb[3]);
@@ -100,6 +102,7 @@ void glDrawTexQuad(const byteA& img,
 void glRasterImage(float x, float y, byteA& img, float zoom=1.);
 
 void read_png(byteA& img, const char* file_name, bool swap_rows);
+void write_png(const byteA& img, const char* file_name, bool swap_rows=true);
 
 
 //===========================================================================
@@ -119,6 +122,7 @@ struct OpenGL {
   struct GLHoverCall { virtual bool hoverCallback(OpenGL&) = 0; };
   struct GLClickCall { virtual bool clickCallback(OpenGL&) = 0; };
   struct GLKeyCall  { virtual bool keyCallback(OpenGL&) = 0; };
+  struct GLScrollCall { virtual bool scrollCallback(OpenGL&, int) = 0; };
   struct GLEvent    { int button, key, x, y; float dx, dy; void set(int b, int k, int _x, int _y, float _dx, float _dy) { button=b; key=k; x=_x; y=_y; dx=_dx; dy=_dy; } };
   struct GLSelect   { int name; double dmin, dmax, x, y, z; };
   struct GLView     { double le, ri, bo, to;  rai::Array<GLDrawer*> drawers;  rai::Camera camera;  byteA* img;  rai::String text;  GLView() { img=nullptr; le=bo=0.; ri=to=1.; } };
@@ -130,6 +134,7 @@ struct OpenGL {
   rai::Array<GLHoverCall*> hoverCalls; ///< list of hover callbacks
   rai::Array<GLClickCall*> clickCalls; ///< list of click callbacks
   rai::Array<GLKeyCall*> keyCalls;     ///< list of click callbacks
+  rai::Array<GLScrollCall*> scrollCalls;     ///< list of click callbacks
   rai::Array<struct CstyleDrawer*> toBeDeletedOnCleanup;
 
   rai::String title;     ///< the window title
@@ -143,7 +148,7 @@ struct OpenGL {
   const char* exitkeys;   ///< additional keys to exit watch mode
   int modifiers;          ///< stores modifier keys
   int mouse_button;       ///< stores which button was pressed
-  int mouseposx, mouseposy;  ///< current x- and y-position of mouse
+  double mouseposx, mouseposy;  ///< current x- and y-position of mouse
   int mouseView;
   bool mouseIsDown;
   rai::Array<GLSelect> selection; ///< list of all selected objects
@@ -162,8 +167,12 @@ struct OpenGL {
   Signaler watching;
   OpenGLDrawOptions drawOptions;
 
+  bool fullscreen; ///<window starts in fullscreenmode on the primary screen
+  bool hideCameraControls; ///<camera can be tilted, rotated, zoomed in/out if controls are enabled
+  bool noCursor;
+
   /// @name constructors & destructors
-  OpenGL(const char* title="rai::OpenGL", int w=400, int h=400, bool _offscreen=false);
+  OpenGL(const char* title="rai::OpenGL", int w=400, int h=400, bool _offscreen=false, bool _fullscreen=false, bool _hideCameraControls=false, bool _noCursor=false);
   //OpenGL(void *parent, const char* title="rai::OpenGL", int w=400, int h=400, int posx=-1, int posy=-1);
   OpenGL(void* container); //special constructor: used when the underlying system-dependent class exists already
 
@@ -192,7 +201,7 @@ struct OpenGL {
   /// @name the core draw routines (actually only for internal use)
   void Draw(int w, int h, rai::Camera* cam=nullptr, bool callerHasAlreadyLocked=false);
   void Select(bool callerHasAlreadyLocked=false);
-  void renderInBack(int w=-1, int h=-1);
+  void renderInBack(int w=-1, int h=-1, bool fromWithinCallback=false);
 
   /// @name showing, updating, and watching
   int update(const char* text=nullptr, bool nonThreaded=false);
@@ -211,11 +220,8 @@ struct OpenGL {
   /// @name to display image data (kind of misuse)
   int watchImage(const byteA& img, bool wait, float backgroundZoom=1.);
   int watchImage(const floatA& img, bool wait, float backgroundZoom=1.);
-  int displayGrey(const floatA& x, bool wait, float backgroundZoom=1.);
   int displayGrey(const arr& x, bool wait, float backgroundZoom=1.);
   int displayRedBlue(const arr& x, bool wait, float backgroundZoom=1.);
-
-  void drawId(uint id);
 
  public: //driver dependent methods
   void openWindow();
@@ -238,7 +244,7 @@ struct OpenGL {
   rai::Quaternion downRot;
   void Key(unsigned char key, int mods);
   void MouseButton(int button, int updown, int x, int y, int mods);
-  void MouseMotion(int x, int y);
+  void MouseMotion(double x, double y);
   void Reshape(int w, int h);
   void Scroll(int wheel, int direction);
   void WindowStatus(int status);

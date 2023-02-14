@@ -7,6 +7,7 @@
     --------------------------------------------------------------  */
 
 #include "mesh_readAssimp.h"
+#include "../Core/util.h"
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
@@ -24,8 +25,8 @@ AssimpLoader::AssimpLoader(const std::string& path, bool flipYZ, bool relativeMe
   Assimp::Importer importer;
   const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
   if(!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode) {
-    cout <<"current dir: " <<getcwd_string() <<endl;
-    HALT("ERROR::ASSIMP:: " << importer.GetErrorString());
+    cout <<"current dir: " <<rai::getcwd_string() <<endl;
+    HALT("ERROR::ASSIMP:: " <<importer.GetErrorString());
   }
 
   directory = path.substr(0, path.find_last_of('/'));
@@ -94,6 +95,14 @@ void AssimpLoader::loadNode(const aiNode* node, const aiScene* scene, arr T, boo
   }
   meshes.append();
 
+  if(node->mMetaData){
+    CHECK(node->mMetaData->mKeys[0]==aiString("mass"), "");
+    double m=0.;
+    node->mMetaData->Get<double>(0,m);
+    masses.append(m);
+  }else{
+    masses.append(0.);
+  }
 
   for(unsigned int i = 0; i < node->mNumMeshes; i++)  {
     aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
@@ -123,9 +132,9 @@ rai::Mesh AssimpLoader::loadMesh(const aiMesh* mesh, const aiScene* scene) {
   if(loadTextures && mesh->mTextureCoords[0]) M.tex.resize(mesh->mNumVertices, 2);
 
   for(unsigned int i = 0; i < mesh->mNumVertices; i++) {
-    M.V[i] = ARR(mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z);
-    if(mesh->mNormals) M.Vn[i] = ARR(mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z);
-    if(loadTextures && mesh->mTextureCoords[0]) M.tex[i] = ARR(mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y);
+    M.V[i] = arr{mesh->mVertices[i].x, mesh->mVertices[i].y, mesh->mVertices[i].z};
+    if(mesh->mNormals) M.Vn[i] = arr{mesh->mNormals[i].x, mesh->mNormals[i].y, mesh->mNormals[i].z};
+    if(loadTextures && mesh->mTextureCoords[0]) M.tex[i] = arr{mesh->mTextureCoords[0][i].x, mesh->mTextureCoords[0][i].y};
   }
 
   M.T.resize(mesh->mNumFaces, 3);
@@ -134,7 +143,7 @@ rai::Mesh AssimpLoader::loadMesh(const aiMesh* mesh, const aiScene* scene) {
     aiFace& face = mesh->mFaces[i];
     //      CHECK_EQ(face.mNumIndices, 3, "");
     if(face.mNumIndices==3)
-      M.T[i] = TUP(face.mIndices[0], face.mIndices[1], face.mIndices[2]);
+      M.T[i] = uintA{face.mIndices[0], face.mIndices[1], face.mIndices[2]};
   }
   //cout <<"mean of loaded mesh=" <<M.getCenter() <<endl;
 
@@ -148,7 +157,7 @@ rai::Mesh AssimpLoader::loadMesh(const aiMesh* mesh, const aiScene* scene) {
     if(!strcmp(m->mKey.C_Str(), "$clr.diffuse")) {
       float* col = (float*)m->mData;
       if(m->mDataLength>=4*sizeof(float) && col[3]) { //not completely transparent
-        M.C = ARR(col[0], col[1], col[2], col[3]);
+        M.C = arr{col[0], col[1], col[2], col[3]};
       }
     }
   }
@@ -202,16 +211,21 @@ void buildAiMesh(const rai::Mesh& M, aiMesh* pMesh) {
 //      pMesh->mTextureCoords[0][ itr - vVertices.begin() ] = aiVector3D( uvs[j].x, uvs[j].y, 0 );
   }
 
-  pMesh->mFaces = new aiFace[ M.T.d0 ];
-  pMesh->mNumFaces = M.T.d0;
+  if(M.T.d1==3){
+    pMesh->mFaces = new aiFace[ M.T.d0 ];
+    pMesh->mNumFaces = M.T.d0;
 
-  for(uint i=0; i<M.T.d0; i++) {
-    aiFace& face = pMesh->mFaces[i];
-    face.mIndices = new unsigned int[3];
-    face.mNumIndices = 3;
-    face.mIndices[0] = M.T(i, 0);
-    face.mIndices[1] = M.T(i, 1);
-    face.mIndices[2] = M.T(i, 2);
+    for(uint i=0; i<M.T.d0; i++) {
+      aiFace& face = pMesh->mFaces[i];
+      face.mIndices = new unsigned int[3];
+      face.mNumIndices = 3;
+      face.mIndices[0] = M.T(i, 0);
+      face.mIndices[1] = M.T(i, 1);
+      face.mIndices[2] = M.T(i, 2);
+    }
+  }else{
+    LOG(-1) <<"can't export non tri meshes";
+    pMesh->mNumFaces = 0;
   }
 }
 

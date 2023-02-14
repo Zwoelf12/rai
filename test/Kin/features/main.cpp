@@ -18,8 +18,8 @@ void testFeature() {
   rai::Frame *obj2 = C.addFrame("obj2", "world");
   obj1->setRelativePosition({1.,1.,1.});
   obj2->setRelativePosition({-1.,-1.,1.});
-  obj1->setShape(rai::ST_ssBox, ARR(1.,1.,1.,rnd.uni(.01, .3)));
-  obj2->setShape(rai::ST_ssBox, ARR(1.,1.,1.,rnd.uni(.01, .3)));
+  obj1->setShape(rai::ST_ssBox, arr{1.,1.,1.,rnd.uni(.01, .3)});
+  obj2->setShape(rai::ST_ssBox, arr{1.,1.,1.,rnd.uni(.01, .3)});
   obj1->setColor({.5,.8,.5,.4});
   obj2->setColor({.5,.5,.8,.4});
 
@@ -91,13 +91,12 @@ void testFeature() {
 
     bool succ=true;
 
-    for(ptr<Feature>& f: F){
+    for(shared_ptr<Feature>& f: F){
       cout <<k <<std::setw(30) <<f->shortTag(C) <<' ';
       succ &= checkJacobian(f->vf2(f->getFrames(pathConfig)), x, 1e-5);
     }
 
-    arr y;
-    F.first()->eval(y, NoArr, F.first()->getFrames(pathConfig));
+    arr y = F.first()->eval(F.first()->getFrames(pathConfig));
 
     if(!succ) pathConfig.watch(true);
   }

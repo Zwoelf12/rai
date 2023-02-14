@@ -80,7 +80,7 @@ auto getCtrlFramesAndScale(const rai::Configuration& C) {
   return R;
 }
 
-double shapeSize(const rai::Configuration& K, const char* name, uint i=2) {
+double shapeSize(const rai::Configuration& K, const char* name, uint i) {
   rai::Frame* f = K.getFrame(name);
   rai::Shape* s = f->shape;
   if(!s) {
@@ -88,11 +88,40 @@ double shapeSize(const rai::Configuration& K, const char* name, uint i=2) {
   }
   if(!s) return 0;
   if(s->type()==rai::ST_marker) return 0.;
-  if(s->type()==rai::ST_sphere) return 2.*s->radius();
+  else if(s->type()==rai::ST_sphere) return 2.*s->radius();
+  else if(s->type()==rai::ST_capsule) return 2.*s->radius();
+  else if(s->type()==rai::ST_cylinder) return s->size(0);
+  else if(s->type()==rai::ST_ssCylinder) return s->size(0);
   return s->size(i);
 }
 
-ptr<Feature> symbols2feature(FeatureSymbol feat, const StringA& frames, const rai::Configuration& C, const arr& scale, const arr& target, int order) {
+std::shared_ptr<Feature> Feature::deepCopy(){
+#define _cpy(T) { T* f = dynamic_cast<T*>(this); if(f) return make_shared<T>(*f); }
+  _cpy(F_Position);
+  _cpy(F_PositionDiff);
+  _cpy(F_PositionRel);
+  _cpy(F_ScalarProduct);
+  _cpy(F_qItself);
+  _cpy(F_qLimits);
+  _cpy(F_qQuaternionNorms);
+  _cpy(F_Pose);
+  _cpy(F_PoseRel);
+  _cpy(F_LinAngVel);
+  _cpy(F_PairCollision);
+  _cpy(F_NewtonEuler);
+  _cpy(F_NewtonEuler_DampedVelocities);
+  _cpy(F_fex_POASurfaceDistance);
+  _cpy(F_fex_ForceIsNormal);
+  _cpy(F_fex_ForceIsPositive);
+  _cpy(F_fex_Force);
+  _cpy(F_fex_POA);
+  _cpy(F_PushRadiusPrior);
+#undef _cpy
+  HALT("deepCopy not registered for this type: " <<rai::niceTypeidName(typeid(*this)));
+  return make_shared<Feature>();
+}
+
+shared_ptr<Feature> symbols2feature(FeatureSymbol feat, const StringA& frames, const rai::Configuration& C, const arr& scale, const arr& target, int order) {
   shared_ptr<Feature> f;
   if(feat==FS_distance) {  f=make_shared<F_PairCollision>(F_PairCollision::_negScalar, false); }
   else if(feat==FS_oppose) {  f=make_shared<F_GraspOppose>(); }
@@ -153,7 +182,7 @@ ptr<Feature> symbols2feature(FeatureSymbol feat, const StringA& frames, const ra
   else if(feat==FS_angularVel) { f=make_shared<F_AngVel>(); }
 
   else if(feat==FS_accumulatedCollisions) {
-    f=make_shared<F_AccumulatedCollisions>();
+    f=make_shared<F_AccumulatedCollisions>(0., true, false);
     if(!frames.N) f->frameIDs = framesToIndices(C.frames);
   }
   else if(feat==FS_jointLimits) {
@@ -188,7 +217,7 @@ ptr<Feature> symbols2feature(FeatureSymbol feat, const StringA& frames, const ra
   }
   else if(feat==FS_qQuaternionNorms) {
     f = make_shared<F_qQuaternionNorms>();
-    for(const rai::Dof *dof:C.activeJoints){
+    for(const rai::Dof *dof:C.activeDofs){
       const rai::Joint* j = dof->joint();
       if(j && (j->type==rai::JT_quatBall || j->type==rai::JT_free || j->type==rai::JT_rigid)) f->frameIDs.append(j->frame->ID);
     }
@@ -197,7 +226,7 @@ ptr<Feature> symbols2feature(FeatureSymbol feat, const StringA& frames, const ra
   else HALT("can't interpret feature symbols: " <<feat);
 
 //  if(!f->frameIDs.N) f->frameIDs = C.getFrameIDs(frames);
-  if(!!frames && frames.N){
+  if(frames.N){
     CHECK(!f->frameIDs.N, "frameIDs are already set");
     if(frames.N==1 && frames.scalar()=="ALL") f->frameIDs = framesToIndices(C.frames);
     else f->frameIDs = C.getFrameIDs(frames);

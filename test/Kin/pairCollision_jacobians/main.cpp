@@ -51,7 +51,7 @@ void TEST(GJK_Jacobians) {
     s1.sscCore().scale(2.);       s2.sscCore().scale(2.);
     s1.mesh().C = {.5,.8,.5,.4};   s2.mesh().C = {.5,.5,.8,.4};
     s1.type() = s2.type() = rai::ST_ssCvx; //ST_mesh;
-    s1.size() = ARR(rnd.uni(.01, .3)); s2.size() = ARR(rnd.uni(.01, .3));
+    s1.size = arr{rnd.uni(.01, .3)}; s2.size = arr{rnd.uni(.01, .3)};
     if(rnd.uni()<.2) s1.sscCore().setDot();
     if(rnd.uni()<.2) s2.sscCore().setDot();
     s1.createMeshes();
@@ -77,20 +77,19 @@ void TEST(GJK_Jacobians) {
 //    }
     succ=true;
 
-    arr y,y2,y3;
-    dist.eval(y, NoArr, F);
+    arr y = dist.eval(F);
     cout <<k <<" dist ";
     succ &= checkJacobian(dist.vf2(F), q, 1e-5);
 
-    distVec.eval(y2, NoArr, F);
+    arr y2 = distVec.eval(F);
     cout <<k <<" vec  ";
     succ &= checkJacobian(distVec.vf2(F), q, 1e-5);
 
-    distNorm.eval(y3, NoArr, F);
+    arr y3 = distNorm.eval(F);
     cout <<k <<" norm  ";
     succ &= checkJacobian(distNorm.vf2(F), q, 1e-5);
 
-    distCenter.eval(y3, NoArr, F);
+    y3 = distCenter.eval(F);
     cout <<k <<" center  ";
     succ &= checkJacobian(distCenter.vf2(F), q, 1e-5);
 
@@ -139,10 +138,12 @@ void TEST(GJK_Jacobians2) {
   C.stepSwift();
 //  C.reportProxies();
 
-  VectorFunction f = [&C](arr& y, arr& J, const arr& x) -> void {
+  VectorFunction f = [&C](const arr& x) -> arr {
     C.setJointState(x);
     C.stepSwift();
-    C.kinematicsPenetration(y, (!!J?J:NoArr), .05);
+    arr y;
+    C.kinematicsPenetration(y, y.J(), .05);
+    return y;
   };
 
 //  checkJacobian(f, K.getJointState(), 1e-4);
@@ -163,14 +164,13 @@ void TEST(GJK_Jacobians2) {
     arr y,J;
     C.kinematicsPenetration(y, J, .05);
 
-    arr y2, J2;
-    qn.eval(y2, J2, qn.getFrames(C));
+    arr y2 = qn.eval(qn.getFrames(C));
 
     cout <<"contact meassure = " <<y(0) <<" diff=" <<y(0) - y_last <<" quat-non-normalization=" <<y2(0) <<endl;
     y_last = y(0);
     V.setConfiguration(C, STRING("t=" <<t <<"  movement along negative contact gradient"), false);
 
-    q -= 1e-2*J + 1e-2*(~y2*J2);
+    q -= 1e-2*J + 1e-2*(~y2*y2.J());
 
     if(y(0)<1e-10) break;
 
@@ -198,8 +198,8 @@ void TEST(GJK_Jacobians3) {
   B1.name = "1"; B2.name="2";
 
   s1.type() = s2.type() = rai::ST_ssBox;
-  s1.size() = {.2, .2, .2, .01 };
-  s2.size() = {.2, .2, .2, .01 };
+  s1.size = {.2, .2, .2, .01 };
+  s2.size = {.2, .2, .2, .01 };
   s1.createMeshes();
   s1.mesh().C = {.5,.8,.5,.9};
   s2.mesh().C = {.5,.5,.8,.9};
@@ -226,17 +226,15 @@ void TEST(GJK_Jacobians3) {
     FrameL F = {&B1, &B2};
     checkJacobian(gjk.vf2(F), q, 1e-4);
 
-    arr y,J;
-    gjk.eval(y, J, F);
+    arr y = gjk.eval(F);
 
     F_qQuaternionNorms qn;
-    arr y2, J2;
-    qn.eval(y2, J2, C.frames);
+    arr y2 = qn.eval(C.frames);
 
     cout <<"contact meassure = " <<y(0) <<endl;
     V.setConfiguration(C, STRING("t=" <<t <<"  movement along negative contact gradient"), false);
 
-    q -= 1e-2*J + 1e-2*(~y2*J2);
+    q -= 1e-2*y.J() + 1e-2*(~y2*y2.J());
   }
 
   V.setConfiguration(C, 0, true);
@@ -278,7 +276,7 @@ void TEST(Functional) {
 
     gl.clear();
     gl.add(glStandardScene);
-//    gl.add(dist);
+    gl.add(dist);
     gl.add(C);
     gl.update(STRING(t), true);
     /*if(!succ)*/ gl.watch();

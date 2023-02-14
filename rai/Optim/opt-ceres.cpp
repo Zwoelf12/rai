@@ -25,8 +25,8 @@
 //===========================================================================
 
 arr CeresInterface::solve() {
-  Conv_MathematicalProgram_CeresProblem cer(P);
-  cer.x_full = P.getInitializationSample();
+  Conv_NLP_CeresProblem cer(P);
+  cer.x_full = P->getInitializationSample();
 
   ceres::Solver::Options options;
   options.linear_solver_type = ceres::SPARSE_NORMAL_CHOLESKY; //DENSE_QR;
@@ -47,7 +47,7 @@ arr CeresInterface::solve() {
 //===========================================================================
 
 class Conv_Feature_CostFunction : public ceres::CostFunction {
-  Conv_MathematicalProgram_CeresProblem& P;
+  Conv_NLP_CeresProblem& P;
   uint feature_id;
   uint featureDim;
   uintA varIds;
@@ -55,7 +55,7 @@ class Conv_Feature_CostFunction : public ceres::CostFunction {
   uint varTotalDim;
 
  public:
-  Conv_Feature_CostFunction(Conv_MathematicalProgram_CeresProblem& _P,
+  Conv_Feature_CostFunction(Conv_NLP_CeresProblem& _P,
                             uint _feature_id,
                             const uintA& variableDimensions,
                             const uintA& featureDimensions,
@@ -66,7 +66,7 @@ class Conv_Feature_CostFunction : public ceres::CostFunction {
                         double** jacobians) const;
 };
 
-Conv_Feature_CostFunction::Conv_Feature_CostFunction(Conv_MathematicalProgram_CeresProblem& _P, uint _feature_id, const uintA& variableDimensions, const uintA& featureDimensions, const uintAA& featureVariables)
+Conv_Feature_CostFunction::Conv_Feature_CostFunction(Conv_NLP_CeresProblem& _P, uint _feature_id, const uintA& variableDimensions, const uintA& featureDimensions, const uintAA& featureVariables)
   : P(_P), feature_id(_feature_id) {
   featureDim = featureDimensions(feature_id);
   varIds = featureVariables(feature_id);
@@ -90,7 +90,7 @@ bool Conv_Feature_CostFunction::Evaluate(const double* const* parameters, double
     uint parameters_count=0;
     for(uint i=0; i<varIds.N; i++) if(varIds(i)>=0) {
         x.referTo(parameters[parameters_count++], varDims(i));
-        P.MP.setSingleVariable(varIds(i), x);
+        P.P->setSingleVariable(varIds(i), x);
       }
   }
   {
@@ -99,37 +99,33 @@ bool Conv_Feature_CostFunction::Evaluate(const double* const* parameters, double
     if(jacobians) {
       J.referTo(jacobians[0], featureDim*varTotalDim);
       J.reshape(featureDim, varTotalDim);
-      P.MP.evaluateSingleFeature(feature_id, phi, J, NoArr);
+      P.P->evaluateSingleFeature(feature_id, phi, J, NoArr);
     } else {
-      P.MP.evaluateSingleFeature(feature_id, phi, NoArr, NoArr);
+      P.P->evaluateSingleFeature(feature_id, phi, NoArr, NoArr);
     }
   }
   return true;
 }
 
-Conv_MathematicalProgram_CeresProblem::Conv_MathematicalProgram_CeresProblem(MathematicalProgram_Factored& _MP) : MP(_MP) {
+Conv_NLP_CeresProblem::Conv_NLP_CeresProblem(const shared_ptr<NLP_Factored>& _P) : P(_P) {
+  uintA variableDimIntegral, featureDimIntegral;
   arr bounds_lo, bounds_up;
-  ObjectiveTypeA featureTypes;
-  uintA variableDimensions, featureDimensions, variableDimIntegral, featureDimIntegral;
-  uintAA featureVariables;
-  uint n = MP.getDimension();
-  MP.getBounds(bounds_lo, bounds_up);
+  P->getBounds(bounds_lo, bounds_up);
+  uint n = P->getDimension();
   for(uint i=0; i<bounds_lo.N; i++) {
     if(bounds_lo.elem(i)>=bounds_up.elem(i)) { bounds_lo.elem(i) = -10.;  bounds_up.elem(i) = 10.; }
   }
-  MP.getFeatureTypes(featureTypes);
-  MP.getFactorization(variableDimensions, featureDimensions, featureVariables);
-  variableDimIntegral = integral(variableDimensions).prepend(0);
-  featureDimIntegral = integral(featureDimensions).prepend(0);
+  variableDimIntegral = integral(P->variableDimensions).prepend(0);
+  featureDimIntegral = integral(P->featureDimensions).prepend(0);
 
   if(n!=variableDimIntegral.last()) throw("");
-  if(featureTypes.N!=featureDimIntegral.last()) throw("");
+  if(P->featureTypes.N!=featureDimIntegral.last()) throw("");
 
   //you must never ever resize these arrays, as ceres takes pointers directly into these fixed memory buffers!
   x_full.resize(variableDimIntegral.last());
-  arrA x(variableDimensions.N);
+  arrA x(P->variableDimensions.N);
   for(uint i=0; i<x.N; i++) {
-    x(i).referTo(x_full.p+variableDimIntegral(i), variableDimensions(i));
+    x(i).referTo(x_full.p+variableDimIntegral(i), P->variableDimensions(i));
   }
 
 //  phi_full.resize(featureDimIntegral.last());
@@ -161,16 +157,16 @@ Conv_MathematicalProgram_CeresProblem::Conv_MathematicalProgram_CeresProblem(Mat
     }
   }
 
-  for(uint i=0; i<featureDimensions.N; i++) {
-    if(featureDimensions(i)) {
-      assert(featureTypes(i) == OT_sos);
+  for(uint i=0; i<P->featureDimensions.N; i++) {
+    if(P->featureDimensions(i)) {
+      assert(P->featureTypes(i) == OT_sos);
       std::vector<double*> parameter_blocks;
-      for(uint k=0; k<featureVariables(i).N; k++) {
-        int var = featureVariables(i)(k);
+      for(uint k=0; k<P->featureVariables(i).N; k++) {
+        int var = P->featureVariables(i)(k);
         if(var>=0) parameter_blocks.push_back(x(var).p);
 //        parameter_blocks(k) = x().p;
       }
-      auto fct = new Conv_Feature_CostFunction(*this, i, variableDimensions, featureDimensions, featureVariables);
+      auto fct = new Conv_Feature_CostFunction(*this, i, P->variableDimensions, P->featureDimensions, P->featureVariables);
       ceresProblem->AddResidualBlock(fct, nullptr, parameter_blocks);
     }
   }
@@ -182,7 +178,7 @@ arr CeresInterface::solve() {
   NICO
 }
 
-Conv_MathematicalProgram_CeresProblem::Conv_MathematicalProgram_CeresProblem(MathematicalProgram_Factored& _MP) : MP(_MP) {
+Conv_NLP_CeresProblem::Conv_NLP_CeresProblem(const shared_ptr<NLP_Factored>& _P) : P(_P) {
   NICO
 }
 

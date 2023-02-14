@@ -26,7 +26,7 @@
 #include <ceres/loss_function.h>
 
 //class Conv_CostFunction : public ceres::CostFunction {
-//  std::shared_ptr<MathematicalProgram> MP;
+//  std::shared_ptr<NLP> MP;
 //  uint feature_id;
 //  uint featureDim;
 //  intA varIds;
@@ -34,7 +34,7 @@
 //  uint varTotalDim;
 
 //public:
-//  Conv_CostFunction(const ptr<MathematicalProgram>& _MP,
+//  Conv_CostFunction(const shared_ptr<NLP>& _MP,
 //                    uint _feature_id,
 //                    const uintA& variableDimensions,
 //                    const uintA& featureDimensions,
@@ -82,7 +82,7 @@
 ////===========================================================================
 
 //struct Conv_MatematicalProgram_CeresProblem {
-//  std::shared_ptr<MathematicalProgram> MP;
+//  std::shared_ptr<NLP> MP;
 
 //  uintA variableDimensions, featureDimensions, variableDimIntegral;
 //  intAA featureVariables;
@@ -96,7 +96,7 @@
 
 //  ceres::Problem cs;
 
-//  Conv_MatematicalProgram_CeresProblem(const ptr<MathematicalProgram>& _MP) : MP(_MP) {
+//  Conv_MatematicalProgram_CeresProblem(const shared_ptr<NLP>& _MP) : MP(_MP) {
 
 //    //you must never ever resize these arrays, as ceres takes pointers directly into these fixed memory buffers!
 //    x_base.resize(MP.getDimension());
@@ -154,7 +154,7 @@ void tutorialBasics(){
   komo.setModel(C, false);
   komo.setTiming(1, 1, 5., 1);
   komo.add_qControlObjective({}, 1, 1e0);
-//  komo.addSquaredQuaternionNorms(-1., -1., 1e1); //when the kinematics includes quaternion joints, keep them roughly regularized
+//  komo.addQuaternionNorms(-1., -1., 1e1); //when the kinematics includes quaternion joints, keep them roughly regularized
 
   komo.addObjective({1.,-1.}, FS_positionDiff, {"endeff", "target"}, OT_sos, {1e1});
 
@@ -167,12 +167,12 @@ void tutorialBasics(){
 #if 1
   komo.solver=rai::KS_dense;
   auto P1 = komo.nlp_SparseNonFactored();
-  Conv_MathematicalProgram_TrivialFactoreded P(*P1);
+  auto P = make_shared<Conv_NLP_TrivialFactoreded>(P1);
 
-  checkJacobianCP(P, komo.x, 1e-4);
+  checkJacobianCP(*P, komo.x, 1e-4);
 
-  Conv_MathematicalProgram_CeresProblem cer(P);
-  cer.x_full = P.getInitializationSample();
+  Conv_NLP_CeresProblem cer(P);
+  cer.x_full = P->getInitializationSample();
 
   // Run the solver!
   ceres::Solver::Options options;
@@ -210,11 +210,11 @@ void tutorialBasics(){
 //===========================================================================
 
 void testCeres2(){
-  MP_TrivialSquareFunction P(20, 1., 2.);
+  NLP_TrivialSquareFunction P(20, 1., 2.);
 //  auto P = make_shared<ChoiceConstraintFunction>();
 
-  Conv_MathematicalProgram_TrivialFactoreded P2(P);
-  Conv_MathematicalProgram_CeresProblem cer(P2);
+  auto P2 = make_shared<Conv_NLP_TrivialFactoreded>(P.ptr());
+  Conv_NLP_CeresProblem cer(P2);
 
   cer.x_full = P.getInitializationSample();
 
@@ -232,18 +232,18 @@ void testCeres2(){
 //===========================================================================
 
 void TEST(Ceres){
-//  MP_TrivialSquareFunction P(2, 1., 2.);
+//  NLP_TrivialSquareFunction P(2, 1., 2.);
   ChoiceConstraintFunction P;
 
   {
-    MathematicalProgram_Traced P2(P);
-    LagrangianProblem L(P2);
-    Conv_MathematicalProgram_TrivialFactoreded P3(L);
+    NLP_Traced P2(P.ptr());
+    LagrangianProblem L(P2.ptr());
+    auto P3 = make_shared<Conv_NLP_TrivialFactoreded>(L.ptr());
 
     CeresInterface opt(P3);
     opt.solve();
     ofstream fil2("z.opt2");
-    P2.xTrace.writeRaw(fil2);
+    fil2 <<P2.xTrace.modRaw();
   }
 
   arr x, phi;
@@ -251,7 +251,7 @@ void TEST(Ceres){
 
   checkJacobianCP(P, x, 1e-4);
 
-  OptConstrained opt(x, NoArr, P);
+  OptConstrained opt(x, NoArr, P.ptr());
   {
     P.getBounds(opt.newton.bounds_lo, opt.newton.bounds_up);
     ofstream fil("z.opt");

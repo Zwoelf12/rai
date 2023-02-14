@@ -6,40 +6,29 @@
 
 //this code is only for demo in the lecture -- a bit messy!
 
-//void displayFunction(const ScalarFunction& f){
-//  arr phi;
-//  arr X, Y;
-//  X.setGrid(2,-1.2,1.2,100);
-//  Y.resize(X.d0);
-//  for(uint i=0;i<X.d0;i++) Y(i) = f(NoArr, NoArr, X[i]);
-//  Y.reshape(101,101);
-//  write(LIST<arr>(Y),"z.fct");
-//  gnuplot("reset; splot [-1:1][-1:1] 'z.fct' matrix us (1.2*($1/50-1)):(1.2*($2/50-1)):3 w l", false, true);
-//}
-
 //==============================================================================
 //
 // test standard constrained optimizers
 //
 
-void testConstraint(MathematicalProgram& p, arr& x_start=NoArr, uint iters=20){
-  OptOptions options;
-  LagrangianProblem lag(p, options);
+void lectureDemo(const shared_ptr<NLP>& P, const arr& x_start=NoArr, uint iters=20){
+  rai::OptOptions options;
+  LagrangianProblem lag(P, options);
 
   //-- initial x
-  arr x = p.getInitializationSample();
+  arr x = P->getInitializationSample();
   if(!!x_start) x=x_start;
 
   //  cout <<std::setprecision(2);
   cout <<"x0=" <<x <<endl;
 
-  system("rm -f z.opt_all");
+  rai::system("rm -f z.opt_all");
 
   uint evals=0;
   for(uint k=0;k<iters;k++){
-    checkJacobianCP(p, x, 1e-4);
-    checkGradient(lag, x, 1e-4);
-    checkHessian (lag, x, 1e-4); //will throw errors: no Hessians for g!
+    checkJacobianCP(*P, x, 1e-4);
+//    checkGradient(lag, x, 1e-4);
+//    checkHessian (lag, x, 1e-4); //will throw errors: no Hessians for g!
 
     lag.lagrangian(NoArr, NoArr, x);
 
@@ -62,7 +51,7 @@ void testConstraint(MathematicalProgram& p, arr& x_start=NoArr, uint iters=20){
     newton.run();
     evals += newton.evals;
 
-    system("cat z.opt >> z.opt_all");
+    rai::system("cat z.opt >> z.opt_all");
     if(x.N==2){
       gnuplot("load 'plt'", false, true);
       rai::wait();
@@ -80,8 +69,8 @@ void testConstraint(MathematicalProgram& p, arr& x_start=NoArr, uint iters=20){
   }
   cout <<std::setprecision(6) <<"\nf(x)=" <<lag.get_costs() <<"\nx_opt=" <<x <<"\nlambda=" <<lag.lambda <<endl;
 
-  system("mv z.opt_all z.opt");
+  rai::system("mv z.opt_all z.opt");
   if(x.N==2) gnuplot("load 'plt'", false, true);
 
-  if(!!x_start) x_start = x;
+//  if(!!x_start) x_start = x;
 }

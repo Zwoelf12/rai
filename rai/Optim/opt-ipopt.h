@@ -5,14 +5,14 @@
     This code is distributed under the MIT License.
     Please see <root-path>/LICENSE for details.
     --------------------------------------------------------------  */
+#pragma once
 
-#include "MathematicalProgram.h"
+#include "NLP.h"
 
 struct IpoptInterface {
-//  MathematicalProgram_Traced P;
-  MathematicalProgram& P;
+  shared_ptr<NLP> P;
 
-  IpoptInterface(MathematicalProgram& P) : P(P) {}
+  IpoptInterface(const shared_ptr<NLP>& P) : P(P) {}
 
   arr solve(const arr& x_init=NoArr);
 };

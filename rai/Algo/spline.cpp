@@ -7,6 +7,9 @@
     --------------------------------------------------------------  */
 
 #include "spline.h"
+#include "../Core/util.h"
+
+#include <math.h>
 
 //==============================================================================
 //
@@ -144,19 +147,35 @@ void Spline::eval(arr& x, arr& xDot, arr& xDDot, double t) const {
 #endif
 }
 
+arr Spline::eval(double t, uint derivative) const{
+  arr x;
+  if(derivative==0) eval(x, NoArr, NoArr, t);
+  else if(derivative==1) eval(NoArr, x, NoArr, t);
+  else if(derivative==2) eval(NoArr, NoArr, x, t);
+  else NIY;
+  return x;
+}
+
+arr Spline::eval(const arr& ts){
+  arr f(ts.N, points.d1);
+  for(uint i=0;i<ts.N;i++) f[i] = eval(ts(i));
+  return f;
+}
+
 Spline& Spline::set(uint _degree, const arr& _points, const arr& _times, const arr& startVel, const arr& endVel) {
-  CHECK_EQ(_points.nd, 2, "");
+  CHECK_EQ(_times.nd, 1, "");
+  CHECK_LE(_points.nd, 2, "");
   CHECK_EQ(_points.d0, _times.N, "");
 
   degree = _degree;
-  points=_points;
+  points=_points; if(points.nd==1) points.reshape(points.N, 1);
   times=_times;
 
   //knot points with head and tail
-  knotPoints = _points;
+  knotPoints = points;
   for(uint i=0; i<degree/2; i++) {
-    knotPoints.prepend(_points[0]);
-    knotPoints.append(_points[_points.d0-1]);
+    knotPoints.prepend(points[0]);
+    knotPoints.append(points[points.d0-1]);
   }
 
   //knot times with head and tail
@@ -179,6 +198,33 @@ Spline& Spline::set(uint _degree, const arr& _points, const arr& _times, const a
   CHECK_EQ(knotPoints.d0, knotTimes.N-degree-1 , "");
 
   return *this;
+}
+
+Spline& Spline::set_vel(uint degree, const arr& _points, const arr& velocities, const arr& _times){
+  arr pts = repmat(_points,1,2).reshape(-1, _points.d1);
+  arr tms = repmat(_times,1,2).reshape(-1);
+  set(degree, pts, tms);
+  if(velocities.N){
+    for(uint t=0;t<velocities.d0;t++){
+      setDoubleKnotVel(2*t, velocities[t]);
+    }
+  }
+  return *this;
+}
+
+Spline&Spline::setUniform(uint _degree, uint steps) {
+  arr x = ::range(0.,1.,steps);
+  set(_degree, x, x);
+  return *this;
+}
+
+arr Spline::getGridBasis(uint T) {
+  arr basis(T, knotPoints.d0);
+  arr db,ddb;
+  for(uint t=0; t<T; t++){
+    getCoeffs2(basis[t].noconst(), db, ddb, double(t)/(T-1), degree, knotTimes.p, knotPoints.d0, knotTimes.N, 0);
+  }
+  return basis;
 }
 
 void Spline::append(const arr& _points, const arr& _times){
@@ -250,7 +296,7 @@ void Path::transform_CurrentBecomes_EndFixed(const arr& current, double t) {
   for(uint i=0; i<knotPoints.d0; i++) {
     double ti = double(i)/double(knotPoints.d0-1);
     double a = (1.-ti)/(1.-t);
-    knotPoints[i]() += a*delta;
+    knotPoints[i] += a*delta;
   }
 }
 
@@ -259,13 +305,282 @@ void Path::transform_CurrentFixed_EndBecomes(const arr& end, double t) {
   for(uint i=0; i<knotPoints.d0; i++) {
     double ti = double(i)/double(knotPoints.d0-1);
     double a = (ti-t)/(1.-t);
-    knotPoints[i]() += a*delta;
+    knotPoints[i] += a*delta;
   }
 }
 
 void Path::transform_CurrentBecomes_AllFollow(const arr& current, double t) {
   arr delta = current - eval(t);
-  for(uint i=0; i<knotPoints.d0; i++) knotPoints[i]() += delta;
+  for(uint i=0; i<knotPoints.d0; i++) knotPoints[i] += delta;
+}
+
+//==============================================================================
+
+void CubicPiece::set(const arr& x0, const arr& v0, const arr& x1, const arr& v1, double tau) {
+  double tau2 = tau*tau, tau3 = tau*tau2;
+  d = x0;
+  c = v0;
+  b = 1./tau2 * (  3.*(x1-x0) - tau*(v1+2.*v0) );
+  a = 1./tau3 * ( -2.*(x1-x0) + tau*(v1+v0) );
+}
+
+void CubicPiece::eval(arr& x, arr& xDot, arr& xDDot, double t) const {
+  double t2=t*t, t3=t*t2;
+  if(!!x){
+    x = d;
+    x += t*c;
+    x += t2*b;
+    x += t3*a;
+  }
+  if(!!xDot){
+    xDot = c;
+    xDot += (2.*t)*b;
+    xDot += (3.*t2)*a;
+  }
+  if(!!xDDot){
+    xDDot = 2.*b;
+    xDDot += (6.*t)*a;
+  }
+}
+
+arr CubicPiece::eval(double t, uint diff){
+  if(diff==3){
+    return 6.*a;
+  }else{
+    NIY;
+  }
+  return {};
+}
+
+void CubicSpline::set(const arr& pts, const arr& vels, const arr& _times){
+  CHECK_GE(_times.N, 2, "need at least 2 knots");
+  times = _times;
+  uint K=pts.d0-1;
+  pieces.resize(K);
+  for(uint k=0;k<K;k++){
+    pieces(k).set(pts[k], vels[k], pts[k+1], vels[k+1], times(k+1)-times(k));
+  }
+}
+
+void CubicSpline::append(const arr& pts, const arr& vels, const arr& _times){
+  CHECK_GE(_times(0), 1e-6, "for appending, first time needs to be greater zero");
+
+  //current end state
+  arr x, xDot;
+  pieces(-1).eval(x, xDot, NoArr, times(-1)-times(-2));
+
+  //new times
+  double Tend = times.last();
+  times.append(_times+Tend);
+
+  uint K0=pieces.N;
+  uint K=pts.d0;
+  pieces.resizeCopy(K0+K);
+  pieces(K0+0).set(x, xDot, pts[0], vels[0], _times(0));
+  for(uint k=1;k<K;k++){
+    pieces(K0+k).set(pts[k-1], vels[k-1], pts[k], vels[k], _times(k)-_times(k-1));
+  }
+}
+
+uint CubicSpline::getPiece(double t) const {
+  CHECK_GE(times.N, 2, "spline is empty");
+  if(t<times(0)) return 0;
+  if(t>times(-1)) return pieces.N-1;
+  uint k = times.rankInSorted(t,rai::lowerEqual<double>, false);
+  if(k) k--;
+  if(k>=pieces.N-1) k=pieces.N-1;
+  return k;
+}
+
+void CubicSpline::eval(arr& x, arr& xDot, arr& xDDot, double t) const {
+  CHECK_GE(times.N, 2, "spline is empty");
+  if(t<times(0)){
+    pieces(0).eval(x, xDot, xDDot, 0.);
+    if(!!xDDot){
+      CHECK_ZERO(absMax(xDot), 1e-6, "don't query a cubic spline at neg time for non-zero start velocity");
+      xDDot.setZero();
+    }
+    return;
+  }
+  if(t>times(-1)){
+    pieces(-1).eval(x, xDot, xDDot, times(-1)-times(-2));
+    if(!!xDDot){
+      CHECK_ZERO(absMax(xDot), 1e-6, "don't query a cubic spline after final time for non-zero final velocity");
+      xDDot.setZero();
+    }
+    return;
+  }
+
+  uint k = times.rankInSorted(t,rai::lowerEqual<double>, false);
+  if(k<times.N){ CHECK_LE(t, times(k), ""); }
+  else{ CHECK_GE(t, times.last(), ""); }
+  if(k) k--;
+  if(k>=pieces.N-1) k=pieces.N-1;
+  //    CHECK_GE(t, times(k), "");
+  //    cout <<"t: " <<t <<" k: " <<k <<' ' <<times <<endl;
+
+  pieces(k).eval(x, xDot, xDDot, t-times(k));
+}
+
+arr CubicSpline::eval(double t, uint diff) const{
+  arr ret;
+  if(diff==0) eval(ret, NoArr, NoArr, t);
+  else if(diff==1) eval(NoArr, ret, NoArr, t);
+  else if(diff==2) eval(NoArr, NoArr, ret, t);
+  else{ uint k=getPiece(t); ret = pieces(k).eval(t-times(k), diff); }
+  return ret;
+}
+
+arr CubicSpline::eval(const arr& T, uint diff) const{
+  arr x(T.N, pieces.first().d.N);
+  for(uint i=0;i<T.N;i++) x[i] = eval(T(i), diff);
+  return x;
+}
+
+arr CubicSplineLeapCost(const arr& x0, const arr& v0, const arr& x1, const arr& v1, double tau, const arr& tauJ) {
+  arr D = (x1-x0) - (.5*tau)*(v0+v1);
+  if(tauJ.N){
+    if(!D.jac) D.J().sparse().resize(v0.N, tauJ.d1, 0);
+    D.J() -= .5 * (v0+v1).noJ() * tauJ;
+  }
+
+  arr V = v1 - v0;
+
+  double s12 = sqrt(12.);
+
+  arr tilD = (s12 * pow(tau, -1.5)) * D;
+  if(tauJ.N) tilD.J() += (s12 * (-1.5) * pow(tau,-2.5)) * D.noJ() * tauJ;
+
+  arr tilV = pow(tau, -0.5) * V;
+  if(tauJ.N){
+    if(!tilV.jac) tilV.J().sparse().resize(v0.N, tauJ.d1, 0);
+    tilV.J() += ((-0.5) * pow(tau,-1.5)) * V.noJ() * tauJ;
+  }
+
+  arr y;
+  y.setBlockVector(tilD, tilV);
+  return y;
+}
+
+arr CubicSplineMaxJer(const arr& x0, const arr& v0, const arr& x1, const arr& v1, double tau, const arr& tauJ){
+  //jerk is 6a
+  double tau2 = tau*tau, tau3 = tau*tau2, tau4 = tau2*tau2;
+  arr a6 = 6./tau3 * (  -2.*(x1-x0) + tau*(v1+v0) );
+  if(tauJ.N){
+    a6.J() += (36./tau4 * (x1-x0)) * tauJ;
+    a6.J() += (-12./tau3 * (v1+v0)) * tauJ;
+  }
+
+  uint n=x0.N;
+  arr y(2*n);
+  if(a6.jac) y.J().sparse().resize(y.N, a6.jac->d1, 0);
+  y.setVectorBlock(a6, 0*n);
+  y.setVectorBlock(-a6, 1*n);
+  return y;
+}
+
+arr CubicSplineAcc0(const arr& x0, const arr& v0, const arr& x1, const arr& v1, double tau, const arr& tauJ){
+  //acceleration is 6a t + 2b
+  double tau2 = tau*tau, tau3 = tau*tau2;
+  arr b2 = 2./tau2 * (  3.*(x1-x0) - tau*(v1+2.*v0) );
+  if(tauJ.N){
+    b2.J() += -12./tau3 * (x1-x0) * tauJ;
+    b2.J() -= -2./tau2 * (v1+2.*v0) * tauJ;
+  }
+  return b2;
+}
+
+arr CubicSplineAcc1(const arr& x0, const arr& v0, const arr& x1, const arr& v1, double tau, const arr& tauJ){
+  //acceleration is 6a t + 2b
+  double tau2 = tau*tau, tau3 = tau*tau2;
+  //  arr d = x0;
+  //  arr c = v0;
+  arr b2 = 2./tau2 * (  3.*(x1-x0) - tau*(v1+2.*v0) );
+  if(tauJ.N){
+    b2.J() += -12./tau3 * (x1-x0) * tauJ;
+    b2.J() -= -2./tau2 * (v1+2.*v0) * tauJ;
+  }
+  arr a6_tau = 6./tau2 * ( -2.*(x1-x0) + tau*(v1+v0) );
+  if(tauJ.N){
+    a6_tau.J() -= -24./tau3 * (x1-x0) * tauJ;
+    a6_tau.J() += -6./tau2 * (v1+v0) * tauJ;
+  }
+  return a6_tau + b2;
+}
+
+arr CubicSplineMaxAcc(const arr& x0, const arr& v0, const arr& x1, const arr& v1, double tau, const arr& tauJ){
+  //acceleration is 6a t + 2b
+  double tau2 = tau*tau, tau3 = tau*tau2;
+  //  arr d = x0;
+  //  arr c = v0;
+  arr b2 = 2./tau2 * (  3.*(x1-x0) - tau*(v1+2.*v0) );
+  if(tauJ.N){
+    b2.J() += -12./tau3 * (x1.noJ()-x0.noJ()) * tauJ;
+    b2.J() -= -2./tau2 * (v1.noJ()+2.*v0.noJ()) * tauJ;
+  }
+  arr a6_tau = 6./tau2 * ( -2.*(x1-x0) + tau*(v1+v0) );
+  if(tauJ.N){
+    a6_tau.J() -= -24./tau3 * (x1.noJ()-x0.noJ()) * tauJ;
+    a6_tau.J() += -6./tau2 * (v1.noJ()+v0.noJ()) * tauJ;
+  }
+
+  uint d=x0.N;
+  arr y(4*d);
+  if(b2.jac) y.J().sparse().resize(y.N, b2.jac->d1, 0);
+  y.setVectorBlock(b2, 0*d);
+  y.setVectorBlock(-b2, 1*d);
+  y.setVectorBlock(b2 + a6_tau, 2*d);
+  y.setVectorBlock(-b2 - a6_tau, 3*d);
+  return y;
+}
+
+arr CubicSplineMaxVel(const arr& x0, const arr& v0, const arr& x1, const arr& v1, double tau, const arr& tauJ){
+  //acc is 6a t + 2b; with root at t=-b/3a
+  //velocity is 3a t^2 + 2b t + c; at root is -b^2 / 3a + c
+
+#if 1
+  double tau2 = tau*tau;
+  //  arr d = x0;
+  arr c = v0;
+  arr b = (  3.*(x1-x0) - tau*(v1+2.*v0) );
+  if(tauJ.N){
+    b.J() -= (v1+2.*v0) * tauJ;
+  }
+  arr a = ( -2.*(x1-x0) + tau*(v1+v0) );
+  if(tauJ.N){
+    a.J() += (v1+v0) * tauJ;
+  }
+  arr t=-tau*b.noJ()/(3.*a.noJ());
+  //indicators for each dimension
+  arr iv0=zeros(t.N),iv1=zeros(t.N),ivm=zeros(t.N);
+  for(uint i=0;i<t.N;i++){
+    if(t(i)<=0) iv0(i)=1.;
+    else if(t(i)>=tau) iv1(i)=1.;
+    else ivm(i)=1.;
+  }
+  arr vmax = c + (1./tau) * (b + 3./4.*a);
+  if(tauJ.N){
+    vmax.J() -= (1./tau2) * (b + 3./4.*a) * tauJ;
+  }
+
+//  vmax = iv0%v0;
+//  vmax += iv1%v1;
+//  vmax += ((1./(3.*tau)) * ((ivm%b%b)/a) + c);
+//  if(tauJ.N){
+//    vmax.J() -= (1./(3.*tau2)) * ((ivm%b%b)/a) * tauJ;
+//  }
+#endif
+
+  uint n=x0.N;
+  arr y(4*n);
+  y.setZero();
+  if(v0.jac) y.J().sparse().resize(y.N, v0.jac->d1, 0);
+  else if(vmax.jac) y.J().sparse().resize(y.N, vmax.jac->d1, 0);
+  y.setVectorBlock(v0, 0*n);
+  y.setVectorBlock(-v0, 1*n);
+  y.setVectorBlock(vmax, 2*n);
+  y.setVectorBlock(-vmax, 3*n);
+  return y;
 }
 
 } //namespace rai

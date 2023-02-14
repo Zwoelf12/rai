@@ -21,8 +21,9 @@
 #endif
 
 #include "opengl.h"
-#include "../Core/array.ipp"
 #include "../Geo/geo.h"
+
+#include <math.h>
 
 #ifdef RAI_GLFW
 #  include <GLFW/glfw3.h>
@@ -31,6 +32,18 @@
 #ifdef RAI_PNG
 #  include <png.h>
 #  include <unistd.h>
+#endif
+
+#define _SHIFT(mod) (mod&GLFW_MOD_SHIFT)
+#define _CTRL(mod) (mod&GLFW_MOD_CONTROL)
+#define _NONE(mod) ((!hideCameraControls && !mod) || (hideCameraControls && _SHIFT(mod) && _CTRL(mod)))
+
+#if 1
+#  define CALLBACK_DEBUG(gl, x) if(gl->reportEvents) { LOG(0) <<x; }
+#elif 1
+#  define CALLBACK_DEBUG(gl, x) { cout <<RAI_HERE <<':' <<x <<endl; }
+#else
+#  define CALLBACK_DEBUG(gl, x)
 #endif
 
 OpenGL& NoOpenGL = *((OpenGL*)(nullptr));
@@ -355,12 +368,19 @@ struct GlfwSpinner : Thread {
   }
 
   static void _Key(GLFWwindow* window, int key, int scancode, int action, int mods) {
+    OpenGL* gl=(OpenGL*)glfwGetWindowUserPointer(window);
+//    gl->modifiers=mods;
+//    CALLBACK_DEBUG(gl, key <<' ' <<action <<' ' <<mods);
     if(action == GLFW_PRESS) {
-      OpenGL* gl=(OpenGL*)glfwGetWindowUserPointer(window);
       if(key==256) key=27;
       if(key==257) key=13;
+      if(key==GLFW_KEY_LEFT_CONTROL){ mods |= GLFW_MOD_CONTROL; key='%'; }
+      if(key==GLFW_KEY_LEFT_SHIFT){ mods |= GLFW_MOD_SHIFT; key='%'; }
       if(key>='A' && key<='Z') key += 'a' - 'A';
       gl->Key(key, mods);
+    }else if(action==GLFW_RELEASE) {
+      if(key==GLFW_KEY_LEFT_CONTROL){ gl->modifiers &= ~GLFW_MOD_CONTROL; }
+      if(key==GLFW_KEY_LEFT_SHIFT){ gl->modifiers &= ~GLFW_MOD_SHIFT; }
     }
   }
 
@@ -415,7 +435,14 @@ void OpenGL::openWindow() {
       glfwWindowHint(GLFW_VISIBLE, GL_TRUE);
     }
     if(!title.N) title="GLFW window";
-    self->window = glfwCreateWindow(width, height, title.p, nullptr, nullptr);
+    if(fullscreen) {
+      GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+      const GLFWvidmode * mode = glfwGetVideoMode(monitor);
+      //glfwSetWindowMonitor( _wnd, _monitor, 0, 0, mode->width, mode->height, 0 );
+      self->window = glfwCreateWindow(mode->width, mode->height, title.p, monitor, nullptr);
+    }else{
+      self->window = glfwCreateWindow(width, height, title.p, nullptr, nullptr); 
+    }
     if(!offscreen){
       glfwMakeContextCurrent(self->window);
       glfwSetWindowUserPointer(self->window, this);
@@ -427,9 +454,16 @@ void OpenGL::openWindow() {
       glfwSetWindowCloseCallback(self->window, GlfwSpinner::_Close);
       glfwSetWindowRefreshCallback(self->window, GlfwSpinner::_Refresh);
  
+      if(noCursor){
+        glfwSetInputMode(self->window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+//        if (glfwRawMouseMotionSupported()) glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+      }
+
       glfwSwapInterval(1);
       glfwMakeContextCurrent(nullptr);
     }
+    glfwGetCursorPos(self->window, &mouseposx, &mouseposy);
+    mouseposy = height-mouseposy;
 
     fg->mutex.unlock();
 
@@ -442,15 +476,13 @@ void OpenGL::openWindow() {
 void OpenGL::closeWindow() {
   self->needsRedraw=0;
   if(self->window) {
-    singletonGlSpinner()->delGL(this);
-    {
-      auto fg = singletonGlSpinner();
-      fg->mutex.lock(RAI_HERE);
-      glfwDestroyWindow(self->window);
-      fg->mutex.unlock();
-      isUpdating.setStatus(0);
-      watching.setStatus(0);
-    }
+    auto fg = singletonGlSpinner();
+    isUpdating.setStatus(0);
+    watching.setStatus(0);
+    fg->delGL(this);
+    fg->mutex.lock(RAI_HERE);
+    glfwDestroyWindow(self->window);
+    fg->mutex.unlock();
   }
 }
 
@@ -550,7 +582,7 @@ uint color2id(byte rgb[3]) {
 arr id2color(uint id) {
   byteA rgb(3);
   id2color(rgb.p, id);
-  return ARR(rgb(0)/256., rgb(1)/256., rgb(2)/256.);
+  return arr{rgb(0)/256., rgb(1)/256., rgb(2)/256.};
 }
 
 #ifdef RAI_GL
@@ -629,15 +661,6 @@ void glColorId(uint id) {
   glColor3ubv(rgb);
 }
 
-void OpenGL::drawId(uint id) {
-  if(drawOptions.drawMode_idColor) {
-    glColorId(id);
-    drawOptions.drawColors=false;
-  } else {
-    drawOptions.drawColors=true;
-  }
-}
-
 /* // shadows do not work with a light source;
    // thus, we need to leave this out. 4. Mar 06 (hh)
 void glShadowTransform()
@@ -704,6 +727,7 @@ void glDrawText(const char* txt, float x, float y, float z, bool largeFont) {
     switch(*txt) {
       case '\n':
         y+=15;
+        if(largeFont) y+=4;
         glRasterPos3f(x, y, z);
         break;
       case '\b':
@@ -914,15 +938,13 @@ void glDrawAxes(double scale, bool colored) {
 }
 
 void glDrawCamera(const rai::Camera& cam) {
-  glTransform(cam.X);
-
   glDrawAxes(.1);
 
   double dxFar, dyFar, zFar;
   double dxNear, dyNear, zNear;
   zNear = cam.zNear;
   zFar = cam.zFar;
-  if(zFar-zNear > 10.) zFar = zNear + .1;
+  if(zFar-zNear > 1.) zFar = zNear + .1;
   if(cam.focalLength) {
     dyNear = zNear * .5/cam.focalLength;
     dyFar = zFar * .5/cam.focalLength;
@@ -1407,6 +1429,7 @@ int OpenGL::watchImage(const floatA& _img, bool wait, float _zoom) {
 }
 
 int OpenGL::watchImage(const byteA& _img, bool wait, float _zoom) {
+  if(!self->window) resize(_img.d1, _img.d0);
   background=_img;
   backgroundZoom=_zoom;
   //resize(img->d1*zoom,img->d0*zoom);
@@ -1415,8 +1438,8 @@ int OpenGL::watchImage(const byteA& _img, bool wait, float _zoom) {
 }
 
 /*void glWatchImage(const floatA &x, bool wait, float zoom){
-  double ma=x.max();
-  double mi=x.min();
+  double ma=max(x);
+  double mi=min(x);
   if(wait) cout <<"watched image min/max = " <<mi <<' ' <<ma <<endl;
   byteA img;
   img.resize(x.d0*x.d1);
@@ -1428,21 +1451,10 @@ int OpenGL::watchImage(const byteA& _img, bool wait, float _zoom) {
   glWatchImage(img, wait, 20);
 }*/
 
-int OpenGL::displayGrey(const floatA& x, bool wait, float _zoom) {
-  static byteA img;
-  resizeAs(img, x);
-  float mi=x.min(), ma=x.max();
-  text.clear() <<"displayGrey" <<" max:" <<ma <<" min:" <<mi <<endl;
-  for(uint i=0; i<x.N; i++) {
-    img.elem(i)=(byte)(255.*(x.elem(i)-mi)/(ma-mi));
-  }
-  return watchImage(img, wait, _zoom);
-}
-
 int OpenGL::displayGrey(const arr& x, bool wait, float _zoom) {
   static byteA img;
   resizeAs(img, x);
-  double mi=x.min(), ma=x.max();
+  double mi=min(x), ma=max(x);
   text.clear() <<"displayGrey" <<" max:" <<ma <<"min:" <<mi <<endl;
   for(uint i=0; i<x.N; i++) {
     img.elem(i)=(byte)(255.*(x.elem(i)-mi)/(ma-mi));
@@ -1451,7 +1463,7 @@ int OpenGL::displayGrey(const arr& x, bool wait, float _zoom) {
 }
 
 int OpenGL::displayRedBlue(const arr& x, bool wait, float _zoom) {
-  double mi=x.min(), ma=x.max();
+  double mi=min(x), ma=max(x);
   text.clear() <<"max=" <<ma <<"min=" <<mi <<endl;
 //  cout <<"\rdisplay" <<win <<" max=" <<ma <<"min=" <<mi;
   static byteA img;
@@ -1541,8 +1553,10 @@ bool glUI::clickCallback(OpenGL& gl) { NICO }
 // OpenGL implementations
 //
 
-OpenGL::OpenGL(const char* _title, int w, int h, bool _offscreen)
-  : title(_title), width(w), height(h), offscreen(_offscreen), reportEvents(false), topSelection(nullptr), fboId(0), rboColor(0), rboDepth(0) {
+OpenGL::OpenGL(const char* _title, int w, int h, bool _offscreen, bool _fullscreen, bool _hideCameraControls, bool _noCursor)
+  : title(_title), width(w), height(h), offscreen(_offscreen),
+   reportEvents(false), topSelection(nullptr), fboId(0), rboColor(0), rboDepth(0),
+   fullscreen(_fullscreen), hideCameraControls(_hideCameraControls), noCursor(_noCursor) {
   //RAI_MSG("creating OpenGL=" <<this);
   self = make_unique<sOpenGL>(this); //this might call some callbacks (Reshape/Draw) already!
   init();
@@ -1585,7 +1599,7 @@ void OpenGL::init() {
   exitkeys="";
 
   backgroundZoom=1;
-};
+}
 
 struct CstyleDrawer : GLDrawer {
   void* classP;
@@ -1683,7 +1697,8 @@ void OpenGL::clearSubView(uint v) {
 void OpenGL::clear() {
   auto _dataLock = dataLock(RAI_HERE);
   views.clear();
-  listDelete(toBeDeletedOnCleanup);
+  for(CstyleDrawer* d:toBeDeletedOnCleanup) delete d;
+  toBeDeletedOnCleanup.clear();
   drawers.clear();
   initCalls.clear();
   hoverCalls.clear();
@@ -2153,14 +2168,6 @@ void OpenGL::about(std::ostream& os) { RAI_MSG("NICO"); }
 // callbacks
 //
 
-#if 1
-#  define CALLBACK_DEBUG(x) if(reportEvents) { LOG(0) <<x; }
-#elif 1
-#  define CALLBACK_DEBUG(x) { cout <<RAI_HERE <<':' <<x <<endl; }
-#else
-#  define CALLBACK_DEBUG(x)
-#endif
-
 void getSphereVector(rai::Vector& vec, int _x, int _y, int le, int ri, int bo, int to) {
   int w=ri-le, h=to-bo;
   int minwh = w<h?w:h;
@@ -2174,8 +2181,8 @@ void getSphereVector(rai::Vector& vec, int _x, int _y, int le, int ri, int bo, i
 }
 
 void OpenGL::Reshape(int _width, int _height) {
-  auto _dataLock = dataLock(RAI_HERE);
-  CALLBACK_DEBUG("Reshape Callback: " <<_width <<' ' <<_height);
+//  auto _dataLock = dataLock(RAI_HERE);
+  CALLBACK_DEBUG(this, "Reshape Callback: " <<_width <<' ' <<_height);
   width=_width;
   height=_height;
   if(width%4) width = 4*(width/4);
@@ -2189,22 +2196,23 @@ void OpenGL::Reshape(int _width, int _height) {
 }
 
 void OpenGL::Key(unsigned char key, int mods) {
-  auto _dataLock = dataLock(RAI_HERE);
-  CALLBACK_DEBUG("Keyboard Callback: " <<key <<"('" <<(char)key <<"')");
+//  auto _dataLock = dataLock(RAI_HERE);
+  CALLBACK_DEBUG(this, "Keyboard Callback: " <<key <<"('" <<(char)key <<"')");
   pressedkey = key;
   modifiers = mods;
 
   bool cont=true;
   for(uint i=0; i<keyCalls.N; i++) cont=cont && keyCalls(i)->keyCallback(*this);
 
-  if(key==13 || key==27 || key=='q' || rai::contains(exitkeys, key)) watching.setStatus(0);
+  if(key==13 || key==27 || key=='q' || key=='r' || rai::contains(exitkeys, key)) watching.setStatus(0);
 }
 
 void OpenGL::MouseButton(int button, int downPressed, int _x, int _y, int mods) {
-  auto _dataLock = dataLock(RAI_HERE);
+//  auto _dataLock = dataLock(RAI_HERE);
   int w=width, h=height;
+  bool needsUpdate=false;
   _y = h-_y;
-  CALLBACK_DEBUG("Mouse Click Callback: " <<button <<' ' <<downPressed <<' ' <<_x <<' ' <<_y);
+  CALLBACK_DEBUG(this, "Mouse Click Callback: " <<button <<' ' <<downPressed <<' ' <<_x <<' ' <<_y);
   mouse_button=1+button;
   if(downPressed) mouse_button=-1-mouse_button;
   mouseposx=_x; mouseposy=_y;
@@ -2222,19 +2230,20 @@ void OpenGL::MouseButton(int button, int downPressed, int _x, int _y, int mods) 
       break;
     }
   }
+
   if(mouseView==-1) {
     getSphereVector(vec, _x, _y, 0, w, 0, h);
     v=0;
   }
-  CALLBACK_DEBUG("associated to view " <<mouseView <<" x=" <<vec.x <<" y=" <<vec.y <<endl);
+  CALLBACK_DEBUG(this, "associated to view " <<mouseView <<" x=" <<vec.x <<" y=" <<vec.y <<endl);
 
   if(!downPressed) {  //down press
     if(mouseIsDown) {  return; } //the button is already down (another button was pressed...)
     //CHECK(!mouseIsDown, "I thought the mouse is up...");
     mouseIsDown=true;
-    drawFocus = true;
+    if(_NONE(modifiers)) drawFocus = true;
   } else {
-    if(!mouseIsDown) {  return; } //the button is already up (another button was pressed...)
+    if(!mouseIsDown) return; //the button is already up (another button was pressed...)
     //CHECK(mouseIsDown, "mouse-up event although the mouse is not down???");
     mouseIsDown=false;
     drawFocus = false;
@@ -2245,11 +2254,12 @@ void OpenGL::MouseButton(int button, int downPressed, int _x, int _y, int mods) 
   downPos=cam->X.pos;
   downFoc=cam->foc;
 
-  //check object clicked on
-  if(mouse_button==1 && (mods&2)) {
+  //-- shift-ctrl-LEFT -> check object clicked on
+  if(mouse_button==1 && !hideCameraControls && _SHIFT(modifiers) && _CTRL(modifiers)) {
     drawFocus = false;
     if(!downPressed) {
       drawOptions.drawMode_idColor = true;
+      drawOptions.drawColors = false;
       beginNonThreadedDraw(true);
       Draw(w, h, nullptr, true);
       endNonThreadedDraw(true);
@@ -2266,13 +2276,15 @@ void OpenGL::MouseButton(int button, int downPressed, int _x, int _y, int mods) 
     }
   } else {
     drawOptions.drawMode_idColor = false;
+    drawOptions.drawColors = true;
   }
 
   //mouse scroll wheel:
-  if(mouse_button==4 && !downPressed) cam->X.pos += downRot*Vector_z * (.1 * (downPos-downFoc).length());
-  if(mouse_button==5 && !downPressed) cam->X.pos -= downRot*Vector_z * (.1 * (downPos-downFoc).length());
+  if(mouse_button==4 && !hideCameraControls && !downPressed) cam->X.pos += downRot*Vector_z * (.1 * (downPos-downFoc).length());
+  if(mouse_button==5 && !hideCameraControls && !downPressed) cam->X.pos -= downRot*Vector_z * (.1 * (downPos-downFoc).length());
 
-  if(mouse_button==3) {  //focus on selected point
+  //-- RIGHT -> focus on selected point
+  if(mouse_button==3 && (_NONE(modifiers))) {
     double d = captureDepth(mouseposy, mouseposx);
     if(d<.001 || d==1.) {
       cout <<"NO SELECTION: SELECTION DEPTH = " <<d <<' ' <<camera.glConvertToTrueDepth(d) <<endl;
@@ -2289,46 +2301,54 @@ void OpenGL::MouseButton(int button, int downPressed, int _x, int _y, int mods) 
       }
       LOG(1) <<"FOCUS: world coords: " <<x;
     }
+    needsUpdate=true;
   }
 
   //step through all callbacks
-  if(!downPressed) {
-    for(uint i=0; i<clickCalls.N; i++) clickCalls(i)->clickCallback(*this);
-  }
+  for(uint i=0; i<clickCalls.N; i++) needsUpdate = needsUpdate || clickCalls(i)->clickCallback(*this);
 
-  postRedrawEvent(true);
+  if(needsUpdate) postRedrawEvent(true);
 }
 
 void OpenGL::Scroll(int wheel, int direction) {
-  auto _dataLock = dataLock(RAI_HERE);
-  CALLBACK_DEBUG("Mouse Wheel Callback: " <<wheel <<' ' <<direction);
-  rai::Camera* cam=&camera;
-  for(mouseView=views.N; mouseView--;) {
-    GLView* v = &views(mouseView);
-    if(mouseposx<v->ri*width && mouseposx>v->le*width && mouseposy<v->to*height && mouseposy>v->bo*height) {
-      cam=&views(mouseView).camera;
-      break;
+//  auto _dataLock = dataLock(RAI_HERE);
+  CALLBACK_DEBUG(this, "Mouse Wheel Callback: " <<wheel <<' ' <<direction);
+  bool needsUpdate=false;
+
+  //-- SCROLL -> zoom
+  if(_NONE(modifiers)){
+    rai::Camera* cam=&camera;
+    for(mouseView=views.N; mouseView--;) {
+      GLView* v = &views(mouseView);
+      if(mouseposx<v->ri*width && mouseposx>v->le*width && mouseposy<v->to*height && mouseposy>v->bo*height) {
+        cam=&views(mouseView).camera;
+        break;
+      }
     }
+
+    if(direction>0) cam->X.pos += cam->X.rot*Vector_z * (.1 * (cam->X.pos-cam->foc).length());
+    else            cam->X.pos -= cam->X.rot*Vector_z * (.1 * (cam->X.pos-cam->foc).length());
+
+    needsUpdate=true;
   }
 
-  if(direction>0) cam->X.pos += cam->X.rot*Vector_z * (.1 * (cam->X.pos-cam->foc).length());
-  else            cam->X.pos -= cam->X.rot*Vector_z * (.1 * (cam->X.pos-cam->foc).length());
+  //step through all callbacks
+  for(uint i=0; i<scrollCalls.N; i++) needsUpdate = needsUpdate || scrollCalls(i)->scrollCallback(*this, direction);
 
-  postRedrawEvent(true);
+  if(needsUpdate) postRedrawEvent(true);
 }
 
 void OpenGL::WindowStatus(int status) {
-  auto _dataLock = dataLock(RAI_HERE);
-  CALLBACK_DEBUG("WindowStatus Callback: " <<status);
+//  auto _dataLock = dataLock(RAI_HERE);
+  CALLBACK_DEBUG(this, "WindowStatus Callback: " <<status);
   if(!status) closeWindow();
-
 }
 
-void OpenGL::MouseMotion(int _x, int _y) {
-  auto _dataLock = dataLock(RAI_HERE);
+void OpenGL::MouseMotion(double _x, double _y) {
+//  auto _dataLock = dataLock(RAI_HERE);
   int w=width, h=height;
   _y = h-_y;
-  CALLBACK_DEBUG("Mouse Motion Callback: " <<_x <<' ' <<_y);
+  CALLBACK_DEBUG(this, "Mouse Motion Callback: " <<_x <<' ' <<_y);
   mouseposx=_x; mouseposy=_y;
   rai::Camera* cam;
   rai::Vector vec;
@@ -2339,17 +2359,14 @@ void OpenGL::MouseMotion(int _x, int _y) {
     cam=&views(mouseView).camera;
     getSphereVector(vec, _x, _y, views(mouseView).le*w, views(mouseView).ri*w, views(mouseView).bo*h, views(mouseView).to*h);
   }
-  CALLBACK_DEBUG("associated to view " <<mouseView <<" x=" <<vec.x <<" y=" <<vec.y <<endl);
+  CALLBACK_DEBUG(this, "associated to view " <<mouseView <<" x=" <<vec.x <<" y=" <<vec.y <<endl);
   lastEvent.set(mouse_button, -1, _x, _y, vec.x-downVec.x, vec.y-downVec.y);
-  if(!mouseIsDown) {  //passive motion -> hover callbacks
-    mouseposx=_x; mouseposy=_y;
-    bool ud=false;
-    for(uint i=0; i<hoverCalls.N; i++) ud=ud || hoverCalls(i)->hoverCallback(*this);
+  mouseposx=_x; mouseposy=_y;
 
-    if(ud) postRedrawEvent(true);
-    return;
-  }
-  if(mouse_button==1 && !modifiers) {  //rotation
+  bool needsUpdate=false;
+  
+  //-- LEFT -> rotation
+  if(mouse_button==1 && _NONE(modifiers)) {
     rai::Quaternion rot;
     if(downVec.z<.1) {
       //margin:
@@ -2362,18 +2379,23 @@ void OpenGL::MouseMotion(int _x, int _y) {
     cam->X.rot = downRot * rot;   //rotate camera's direction
     rot = downRot * rot / downRot; //interpret rotation relative to current viewing
     cam->X.pos = downFoc + rot * (downPos - downFoc);   //rotate camera's position
+    needsUpdate=true;
   }
-  if(mouse_button==1 && (modifiers&1) && !(modifiers&2)) {  //translation mouse_button==2){
+  
+  //-- shift-LEFT -> translation
+  if(mouse_button==1 && (!hideCameraControls && _SHIFT(modifiers) && !_CTRL(modifiers))) {
     rai::Vector trans = vec - downVec;
     trans.z = 0.;
     trans *= .1*(downFoc - downPos).length();
     trans = downRot * trans;
     cam->X.pos = downPos - trans;
+    needsUpdate=true;
   }
-  if(mouse_button==3 && !modifiers) {  //zooming || (mouse_button==1 && !(modifiers&GLUT_ACTIVE_SHIFT) && (modifiers&GLUT_ACTIVE_CTRL))){
-  }
+  
+  //step through all callbacks
+  for(uint i=0; i<hoverCalls.N; i++) needsUpdate = needsUpdate || hoverCalls(i)->hoverCallback(*this);
 
-  postRedrawEvent(true);
+  if(needsUpdate) postRedrawEvent(true);
 }
 
 //===========================================================================
@@ -2456,8 +2478,8 @@ struct XBackgroundContext {
 
 Singleton<XBackgroundContext> xBackgroundContext;
 
-void OpenGL::renderInBack(int w, int h) {
-  beginNonThreadedDraw();
+void OpenGL::renderInBack(int w, int h, bool fromWithinCallback) {
+  beginNonThreadedDraw(fromWithinCallback);
 
 #ifdef RAI_GL
   if(w<0) w=width;
@@ -2542,7 +2564,7 @@ void OpenGL::renderInBack(int w, int h) {
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 #endif
 
-  endNonThreadedDraw();
+  endNonThreadedDraw(fromWithinCallback);
 }
 
 //===========================================================================
@@ -2684,24 +2706,69 @@ void read_png(byteA& img, const char* file_name, bool swap_rows) {
   png_read_update_info(png, info);
 
   img.resize(height, png_get_rowbytes(png, info));
-  rai::Array<byte*> cpointers = img.getCarray();
-  //    row_pointers = (png_bytep*)malloc(sizeof(png_bytep) * height);
-  //    for(int y = 0; y < height; y++) {
-  //      row_pointers[y] = (png_byte*)malloc(png_get_rowbytes(png,info));
-  //    }
+  rai::Array<byte*> cpointers = getCarray(img);
+  if(swap_rows) cpointers.reverse();
 
   png_read_image(png, cpointers.p);
 
   img.resize(height, width, img.N/(height*width));
 
   fclose(fp);
-
-  if(swap_rows) flip_image(img);
 #else
   LOG(-2) <<"libpng not linked";
 #endif
 }
 
+
+
+void write_png(const byteA& img, const char* file_name, bool swap_rows) {
+#ifdef RAI_PNG
+  FILE *fp = fopen(file_name, "wb");
+  if(!fp) abort();
+
+  png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+  if (!png) abort();
+
+  png_infop info = png_create_info_struct(png);
+  if (!info) abort();
+
+  if (setjmp(png_jmpbuf(png))) abort();
+
+  png_init_io(png, fp);
+
+  // Output is 8bit depth, RGBA format.
+  png_set_IHDR(
+    png,
+    info,
+    img.d1, img.d0,
+    8,
+    img.d2==4?PNG_COLOR_TYPE_RGBA:PNG_COLOR_TYPE_RGB,
+    PNG_INTERLACE_NONE,
+    PNG_COMPRESSION_TYPE_DEFAULT,
+    PNG_FILTER_TYPE_DEFAULT
+  );
+  png_write_info(png, info);
+
+  // To remove the alpha channel for PNG_COLOR_TYPE_RGB format,
+  // Use png_set_filler().
+  //png_set_filler(png, 0, PNG_FILLER_AFTER);
+
+  byteA imgRef = img.ref();
+  imgRef.reshape(img.d0, -1);
+  rai::Array<byte*> cpointers = getCarray(imgRef);
+  if(swap_rows) cpointers.reverse();
+
+  png_write_image(png, cpointers.p);
+  png_write_end(png, NULL);
+
+  fclose(fp);
+
+  png_destroy_write_struct(&png, &info);
+#else
+  LOG(-2) <<"libpng not linked";
+#endif
+
+}
 RUN_ON_INIT_BEGIN(opengl)
 rai::Array<GLDrawer*>::memMove=1;
 RUN_ON_INIT_END(opengl)

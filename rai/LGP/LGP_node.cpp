@@ -12,10 +12,9 @@
 #include "../MCTS/solver_PlainMC.h"
 #include "../KOMO/komo.h"
 #include "../Kin/switch.h"
-#include "../Optim/GraphOptim.h"
 #include "../Gui/opengl.h"
 #include "../Kin/viewer.h"
-#include "../Optim/solver.h"
+#include "../Optim/NLP_Solver.h"
 
 #define DEBUG(x) //x
 #define DEL_INFEASIBLE(x) //x
@@ -44,16 +43,16 @@ rai::SkeletonTranscription skeleton2Bound2(BoundType boundType, rai::Skeleton& S
                                            const arrA& waypoints) {
 
   if(boundType==BD_pose)
-    return S.mp_finalSlice();
+    return S.nlp_finalSlice();
 
   if(boundType==BD_seq)
-    return S.mp();
+    return S.nlp();
 
   if(boundType==BD_path)
-    return S.mp_path();
+    return S.nlp_path();
 
   if(boundType==BD_seqPath)
-    return S.mp_path(waypoints);
+    return S.nlp_path(waypoints);
 
   HALT("should not be here!");
 
@@ -163,7 +162,8 @@ void LGP_Node::optBound(BoundType bound, bool collisions, int verbose) {
   CHECK(comp, "no compute object returned");
 #endif
 
-  ptr<KOMO>& komo = problem(bound).komo;
+  shared_ptr<KOMO>& komo = problem(bound).komo;
+  komo->opt.verbose = rai::MAX(verbose, 0);
 
   //-- verbosity...
   if(tree.verbose>1){
@@ -198,10 +198,9 @@ void LGP_Node::optBound(BoundType bound, bool collisions, int verbose) {
   try {
     komo->run();
 
-    NLP_Solver sol;
-    sol.setProblem(*problem(bound).mp);
-
-    auto ret = sol.solve();
+//    NLP_Solver sol;
+//    sol.setProblem(*problem(bound).nlp);
+//    auto ret = sol.solve();
 //    problem(bound).sol = sol.solve();
 
   } catch(std::runtime_error& err) {
@@ -220,10 +219,11 @@ void LGP_Node::optBound(BoundType bound, bool collisions, int verbose) {
   DEBUG(komo->getReport(false, 1, FILE("z.problem")););
   Graph result = komo->getReport((komo->opt.verbose>0 && bound>=2));
   DEBUG(FILE("z.problem.cost") <<result;);
+//  cout <<komo->getCollisionPairs() <<endl;
 
   double cost_here = komo->sos;
   double constraints_here = komo->ineq + komo->eq;
-  bool feas = (constraints_here<1.);
+  bool feas = (constraints_here<2.);
 
   if(komo->opt.verbose>0) {
     cout <<"  RESULTS: cost: " <<cost_here <<" constraints: " <<constraints_here <<" feasible: " <<feas <<endl;
@@ -416,7 +416,7 @@ void LGP_Node::checkConsistency() {
   if(children.N) {
     fol.setState(folState, step);
     auto actions = fol.get_actions();
-    CHECK_EQ(children.N, actions.size(), "");
+    CHECK_EQ(children.N, actions.N, "");
 #ifndef RAI_NOCHECK
     uint i=0;
     for(FOL_World::Handle& a:actions) {

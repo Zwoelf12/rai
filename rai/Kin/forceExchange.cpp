@@ -10,7 +10,7 @@
 #include "../Gui/opengl.h"
 #include "../Geo/pairCollision.h"
 
-rai::ForceExchange::ForceExchange(rai::Frame& a, rai::Frame& b, ForceExchangeType _type, rai::ForceExchange* copy)
+rai::ForceExchange::ForceExchange(rai::Frame& a, rai::Frame& b, ForceExchangeType _type, const ForceExchange* copy)
   : a(a), b(b), type(_type), scale(1.) {
   CHECK(&a != &b, "");
   CHECK_EQ(&a.C, &b.C, "contact between frames of different configuration!");
@@ -19,10 +19,11 @@ rai::ForceExchange::ForceExchange(rai::Frame& a, rai::Frame& b, ForceExchangeTyp
   a.C.reset_q();
   a.forces.append(this);
   b.forces.append(this);
-  a.C.forces.append(this);
+  a.C.otherDofs.append(this);
   setZero();
   if(copy) {
     qIndex=copy->qIndex; dim=copy->dim; limits=copy->limits; active=copy->active;
+    sampleUniform=copy->sampleUniform;  sampleSdv=copy->sampleSdv;
     if(copy->mimic) NIY;
 
     scale=copy->scale;
@@ -38,14 +39,15 @@ rai::ForceExchange::~ForceExchange() {
   a.C.reset_q();
   a.forces.removeValue(this);
   b.forces.removeValue(this);
-  a.C.forces.removeValue(this);
+  a.C.otherDofs.removeValue(this);
 }
 
 void rai::ForceExchange::setZero() {
   force.resize(3).setZero();
   torque.resize(3).setZero();
   if(type==FXT_poa || type==FXT_poaOnly){
-    poa = .5*a.getPosition() + .5*b.getPosition();
+//    poa = .5*a.getPosition() + .5*b.getPosition();
+    poa = b.getPosition();
   }else if(type==FXT_forceZ){
     force.resize(1).setZero();
     torque.resize(1).setZero();
@@ -116,10 +118,10 @@ void rai::ForceExchange::kinPOA(arr& y, arr& J) const {
 
   if(type==FXT_poa){
     y = poa;
-    if(!!J) for(uint i=0; i<3; i++) J.elem(i, qIndex+0+i) = 1.;
+    if(!!J && active) for(uint i=0; i<3; i++) J.elem(i, qIndex+0+i) = 1.;
   }else if(type==FXT_poaOnly){
     y = poa;
-    if(!!J) for(uint i=0; i<3; i++) J.elem(i, qIndex+0+i) = 1.;
+    if(!!J && active) for(uint i=0; i<3; i++) J.elem(i, qIndex+0+i) = 1.;
   }else if(type==FXT_torque || type==FXT_force || type==FXT_forceZ){
     //use b as the POA!!
     b.C.kinematicsPos(y, J, &b);
@@ -131,17 +133,17 @@ void rai::ForceExchange::kinForce(arr& y, arr& J) const {
 
   if(type==FXT_poa){
     y = force;
-    if(!!J) for(uint i=0; i<3; i++) J.elem(i, qIndex+3+i) = scale;
+    if(!!J && active) for(uint i=0; i<3; i++) J.elem(i, qIndex+3+i) = scale;
   }else if(type==FXT_poaOnly){
     //is zero already
   }else if(type==FXT_torque || type==FXT_force || type==FXT_force){
     y = force;
-    if(!!J) for(uint i=0; i<3; i++) J.elem(i, qIndex+0+i) = scale;
+    if(!!J && active) for(uint i=0; i<3; i++) J.elem(i, qIndex+0+i) = scale;
   }else if(type==FXT_forceZ){
     arr z, Jz;
     b.C.kinematicsVec(z, Jz, &b, Vector_z);
     y = force.scalar() * z;
-    if(!!J){
+    if(!!J && active){
       for(uint i=0; i<3; i++) J.elem(i, qIndex) += scale * z.elem(i);
       J += force.scalar()*Jz;
     }
@@ -186,7 +188,7 @@ arr gnuplot(const double x){
   double g = x * x * x;
   double b = std::sin(x * 2 * RAI_PI);
 
-  return ARR(r, g, b);
+  return arr{r, g, b};
 }
 
 void rai::ForceExchange::glDraw(OpenGL& gl) {
@@ -215,6 +217,7 @@ void rai::ForceExchange::glDraw(OpenGL& gl) {
   glVertex3dv((_poa+scale*_force).p); //white: force
   glEnd();
   glLineWidth(1.f);
+  glColor(.0,.0,.0, 1.);
 
 //  glBegin(GL_LINES);
 //  glVertex3dv(&a.ensure_X().pos.x);

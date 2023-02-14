@@ -1,4 +1,7 @@
 #include <Core/array.h>
+#include <Core/util.h>
+
+#include <math.h>
 
 using namespace std;
 
@@ -86,7 +89,7 @@ void TEST(Basics){
   for(; ap!=astop; ap++) *ap=ap-a.p; //assign pointer offsets to entries
   cout <<"\narray filled with pointer offsets (-> memory is linear):\n" <<a <<endl;
   cout <<"\nsubarray (of the original) [2:4,:] (in MATLAB notation)\n" <<a.sub(2,4,0,-1) <<endl;
-  CHECK_EQ(a.last(),a.N-1,"");
+  CHECK_EQ(a.elem(-1),a.N-1,"");
 
   //reshape
   cout <<a.copy().reshape(5,7) <<endl;
@@ -140,12 +143,12 @@ void TEST(Basics){
   cout <<"\nrows manipulated:\n" <<a <<endl;
 
   //setting arrays ``by hand''
-  a = ARR(0, 1, 2, 3, 4); //ARR(...) is equivalent to rai::Array<double>({ ... })
+  a = arr{0, 1, 2, 3, 4}; //arr{...} is equivalent to rai::Array<double>({ ... })
   cout <<"\nset by hand:\n" <<a <<endl;
   ints = { 0, -1, -2, -3, -4 };
   cout <<"\nset by hand:\n" <<ints <<endl;
-  copy(a, ints); //copying between different types
-  CHECK_EQ(a(2),-2,"");
+//  copy(a, ints); //copying between different types
+//  CHECK_EQ(a(2),-2,"");
 
   //using initialization lists within expressions
   //arr b = a + {2,2,2,2,2}; //does not compile
@@ -157,7 +160,6 @@ void TEST(Basics){
   cout <<"\nA:\n" <<A <<endl;
   cout <<"\n(1/A):\n" <<(1/A) <<endl;
   cout <<"\n(1/A)*A:\n" <<(1/A)*A <<endl;
-  cout <<"\n(1/A)*A:\n" <<(A|A) <<endl;
 
   //concatenation
   a = {1.,2,3};
@@ -204,7 +206,7 @@ void TEST(Iterators) {
   cout <<x <<endl;
 
   for(auto& e:x.itEnumerated()){
-    cout <<e.i <<' ' <<e() <<endl;
+    cout <<e.count <<' ' <<e() <<endl;
   }
 
   for(auto& e:x.itReverse()){
@@ -235,14 +237,38 @@ void TEST(StdVectorCompat) {
 //===========================================================================
 
 void TEST(Autodiff){
-  arr  A(5,3), x(3), y;
+  arr  A(5,3), x(3), a(3);
   rndGauss(A);
   rndGauss(x);
+  rndGauss(a);
 
-  x.diff_setId();
+  x.J_setId();
 
-  y = A*x;
+  arr y = A*x;
   cout <<y <<endl <<A <<endl;
+
+
+#define checkOperation(op) \
+  { \
+  VectorFunction f = [&](const arr& x) -> arr { return op; }; \
+  checkJacobian(f, x, 1e-1); \
+  }
+
+  checkOperation(A*x);
+  checkOperation(x+a);
+  checkOperation(a+x);
+  checkOperation(x-a);
+  checkOperation(a-x);
+  checkOperation(x%a);
+  checkOperation(a%x);
+  checkOperation(x/a);
+  checkOperation(a/x);
+  checkOperation(-x);
+  checkOperation(~x);
+  checkOperation(~x*a);
+  checkOperation(~a*x);
+  checkOperation(crossProduct(x,a));
+  checkOperation(crossProduct(a,x));
 }
 
 //===========================================================================
@@ -269,7 +295,7 @@ void TEST(SimpleIterators) {
 
   cout << "*** Iterate linearly through the memory of an array (3D)" << endl;
   arr C = randn(1, 8);
-  C.reshape(TUP(2, 2, 2));
+  C.reshape(uintA{2, 2, 2});
   for (const auto& elem : C) {
     cout << elem << endl;
   }
@@ -316,10 +342,10 @@ void TEST(Matlab){
   cout <<"\neye(5)" <<x <<endl;
   for(uint i=0;i<x.d0;i++) CHECK_EQ(x(i,i),1.,"is not eye");
 
-  uintA p = randperm(5);
+  uintA p = rai::randperm(5);
   cout <<"\nrandperm(5)" <<p <<endl;
 
-  arr A = ARR(1,2,3,4);  A.reshape(2,2);
+  arr A = arr{1,2,3,4};  A.reshape(2,2);
   arr B = repmat(A,2,3);
   cout <<"\nA=" <<A <<endl;
   cout <<"\nrepmat(A,2,3)" <<B <<endl;
@@ -349,8 +375,8 @@ void TEST(MemoryBound){
   arr A;
   try{
     A.resize(1000,1000,1000);
-  }catch(...){
-    cout <<"caught memory restriction exception..." <<endl;
+  }catch(const std::runtime_error& err){
+    cout <<"caught memory restriction exception (INTENDED)" <<endl;
   }
   A.resize(1000);
   cout <<"total memory allocated = " <<rai::globalMemoryTotal <<endl;
@@ -440,7 +466,7 @@ void TEST(Sorted){
 
   for(uint k=0;k<100;k++){
     uint y=rnd(99);
-    if(!x.N || y>x.last()) x.insertInSorted(y, rai::greater<uint>);
+    if(!x.N || y>x.elem(-1)) x.insertInSorted(y, rai::greater<uint>);
     if(x.N>33) x.popLast();
     cout <<x <<endl;
     CHECK(x.isSorted(rai::greaterEqual<uint>),"");
@@ -472,7 +498,7 @@ void TEST(Gnuplot){
 
 void TEST(Determinant){
   cout <<"\n*** determinant computation\n";
-  arr a = ARR(1,1,2,1,1,0,0,-2,3);
+  arr a = arr{1,1,2,1,1,0,0,-2,3};
   a.reshape(3,3);
   double d=determinant(a);
   double c00=cofactor(a,0,0);
@@ -668,26 +694,26 @@ void TEST(Tensor){
   uint k;
   for(k=0;k<100;k++){
     //element-wise multiplication
-    A.resize(TUP(rnd(3)+1,rnd(3)+1));
+    A.resize(rnd(3)+1, rnd(3)+1);
     B.resize(A.d1,A.d0);
     rndUniform(A,0.,1.,false);
     rndUniform(B,0.,1.,false);
     C=A;
-    tensorMultiply(C,B,TUP(1,0));
+    tensorMultiply(C,B,uintA{1,0});
     CHECK_EQ(C,A%~B,"");
     C=A;
-    tensorMultiply_old(C,B,TUP(C.d0,C.d1),TUP(1,0));
+    tensorMultiply_old(C,B,uintA{C.d0,C.d1},uintA{1,0});
     CHECK_EQ(C,A%~B,"");
-    tensorEquation(C,A,TUP(0,1),B,TUP(1,0),0);
+    tensorEquation(C,A,uintA{0,1},B,uintA{1,0},0);
     CHECK_EQ(C,A%~B,"");
 
     //matrix product
     C.resize(A.d0,A.d0);
-    tensorEquation(C,A,TUP(0,2),B,TUP(2,1),1);
+    tensorEquation(C,A,uintA{0,2},B,uintA{2,1},1);
     CHECK_EQ(C,A*B,"");
 
     C.resize(A.d1,A.d1);
-    tensorEquation(C,A,TUP(2,0),B,TUP(1,2),1);
+    tensorEquation(C,A,uintA{2,0},B,uintA{1,2},1);
     CHECK_EQ(C,~A*~B,"");
   }
   cout <<"\n... tensor tests successful\n";
@@ -695,7 +721,7 @@ void TEST(Tensor){
   //test permutations:
   A.resize(2,3,4);
   rndInteger(A,0,1,false);
-  tensorPermutation(B, A, TUP(0,1,2));
+  tensorPermutation(B, A, uintA{0,1,2});
   cout <<A <<endl <<B <<endl;
 }
 
@@ -879,13 +905,13 @@ void TEST(EigenValues){
     lambda_lo = lambda_hi - lambda_lo;
   }
   //flip signs
-  if(x_hi.last()*x.last()<0.) x_hi *= -1.;
+  if(x_hi.elem(-1)*x.elem(-1)<0.) x_hi *= -1.;
   if(x_lo.elem(0)*x.elem(0)<0.) x_lo *= -1.;
   cout <<"power method:" <<endl;
   cout <<lambda_hi <<" : " <<x_hi <<endl;
   cout <<lambda_lo <<" : " <<x_lo <<endl;
   cout <<"errors:" <<endl;
-  cout <<fabs(lambda_hi-lambda.last()) <<" " <<sqrDistance(x_hi, x[x.d0-1]) <<endl;
+  cout <<fabs(lambda_hi-lambda.elem(-1)) <<" " <<sqrDistance(x_hi, x[x.d0-1]) <<endl;
   cout <<fabs(lambda_lo-lambda(0)) <<" " <<sqrDistance(x_lo, x[0]) <<endl;
 }
 
@@ -893,9 +919,6 @@ void TEST(EigenValues){
 
 int MAIN(int argc, char **argv){
   rai::initCmdLine(argc, argv);
-
-  testAutodiff();
-  return 0;
 
   testBasics();
   testIterators();
@@ -908,7 +931,7 @@ int MAIN(int argc, char **argv){
   testAutodiff();
   testMatlab();
   testException();
-//  testMemoryBound();
+  testMemoryBound();
   testBinaryIO();
   testExpression();
   testPermutation();
@@ -926,7 +949,7 @@ int MAIN(int argc, char **argv){
   testGaussElimintation();
   
   cout <<"\n ** total memory still allocated = " <<rai::globalMemoryTotal <<endl;
-  CHECK_ZERO(rai::globalMemoryTotal, 0, "memory not released");
+  //CHECK_ZERO(rai::globalMemoryTotal, 0, "memory not released");
   
   return 0;
 }

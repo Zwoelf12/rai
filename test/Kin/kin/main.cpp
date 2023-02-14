@@ -6,7 +6,7 @@
 #include <Algo/spline.h>
 #include <Algo/algos.h>
 #include <Gui/opengl.h>
-#include <Plot/plot.h>
+#include <Gui/plot.h>
 #include <GL/gl.h>
 #include <Optim/optimization.h>
 #include <Kin/feature.h>
@@ -36,18 +36,16 @@ void TEST(LoadSave){
 //
 
 void testJacobianInFile(const char* filename, const char* shape){
-  rai::Configuration K(filename);
+  rai::Configuration C(filename);
 
-  rai::Frame *a=K.getFrame(shape);
+  rai::Frame *a=C.getFrame(shape);
 
-  VectorFunction f = ( [&a, &K](arr& y, arr& J, const arr& x) -> void
-  {
-    K.setJointState(x);
-    K.kinematicsPos(y, J, a, NoVector);
-    if(!!J) cout <<"J=" <<J <<endl;
+  VectorFunction f = ( [&a, &C](const arr& x) -> arr {
+    C.setJointState(x);
+    return C.kinematics_pos(a);
   } );
 
-  checkJacobian(f, K.q, 1e-4);
+  checkJacobian(f, C.q, 1e-4);
 
 //  rai::wait();
 }
@@ -74,21 +72,21 @@ void TEST(Kinematics){
 
   struct MyFct : VectorFunction{
     enum Mode {Pos, Vec, Quat} mode;
-    rai::Configuration& K;
-    rai::Frame *b, *b2;
-    rai::Vector &vec, &vec2;
-    MyFct(Mode _mode, rai::Configuration &_K,
-          rai::Frame *_b, rai::Vector &_vec, rai::Frame *_b2, rai::Vector &_vec2)
-      : mode(_mode), K(_K), b(_b), b2(_b2), vec(_vec), vec2(_vec2){
-      VectorFunction::operator= ( [this](arr& y, arr& J, const arr& x) -> void{
-        K.setJointState(x);
-        K.setJacModeAs(J);
+    rai::Configuration& C;
+    rai::Frame *b;
+    rai::Vector &vec;
+    MyFct(Mode _mode, rai::Configuration &_C, rai::Frame *_b, rai::Vector &_vec)
+      : mode(_mode), C(_C), b(_b), vec(_vec){
+      VectorFunction::operator= ( [this](const arr& x) -> arr {
+        arr y, J;
+        C.setJointState(x);
         switch(mode){
-          case Pos:    K.kinematicsPos(y,J,b,vec); break;
-          case Vec:    K.kinematicsVec(y,J,b,vec); break;
-          case Quat:   K.kinematicsQuat(y,J,b); break;
-//          case RelRot: K.kinematicsRelRot(y,J,b,b2); break;
+          case Pos:    C.kinematicsPos(y,J,b,vec); break;
+          case Vec:    C.kinematicsVec(y,J,b,vec); break;
+          case Quat:   C.kinematicsQuat(y,J,b); break;
         }
+        y.J() = J;
+        return y;
         //if(!!J) cout <<"\nJ=" <<J <<endl;
       } );
     }
@@ -96,23 +94,24 @@ void TEST(Kinematics){
   };
 
 //  rai::Configuration G("arm7.g");
-  rai::Configuration G("kinematicTests.g");
+  rai::Configuration C("kinematicTests.g");
 //  rai::Configuration G("../../../../rai-robotModels/pr2/pr2.g");
 //  rai::Configuration G("../../../projects/17-LGP-push/quatJacTest.g");
 //  G.watch(true);
 
+  C.jacMode = C.JM_sparse;
+
   for(uint k=0;k<10;k++){
-    rai::Frame *b = G.frames.rndElem();
-    rai::Frame *b2 = G.frames.rndElem();
+    rai::Frame *b = C.frames.rndElem();
     rai::Vector vec=0, vec2=0;
     vec.setRandom();
     vec2.setRandom();
-    arr x(G.getJointStateDimension());
+    arr x(C.getJointStateDimension());
     rndUniform(x,-.5,.5,false);
 
-    cout <<"kinematicsPos:   "; checkJacobian(MyFct(MyFct::Pos   , G, b, vec, b2, vec2)(), x, 1e-5);
-    cout <<"kinematicsVec:   "; checkJacobian(MyFct(MyFct::Vec   , G, b, vec, b2, vec2)(), x, 1e-5);
-    cout <<"kinematicsQuat:  "; checkJacobian(MyFct(MyFct::Quat  , G, b, vec, b2, vec2)(), x, 1e-5);
+    cout <<"kinematicsPos:   "; checkJacobian(MyFct(MyFct::Pos  , C, b, vec)(), x, 1e-5);
+    cout <<"kinematicsVec:   "; checkJacobian(MyFct(MyFct::Vec  , C, b, vec)(), x, 1e-5);
+    cout <<"kinematicsQuat:  "; checkJacobian(MyFct(MyFct::Quat , C, b, vec)(), x, 1e-5);
 
     //checkJacobian(Convert(T1::f_hess, nullptr), x, 1e-5);
   }
@@ -156,7 +155,7 @@ void TEST(Graph){
 void TEST(QuaternionKinematics){
   rai::Configuration G("kinematicTestQuat.g");
 
-  for(uint k=0;k<3;k++){
+  for(uint k=0;k<5;k++){
     rai::Quaternion target;
     target.setRandom();
     G.getFrame("ref")->set_Q()->rot = target;
@@ -171,6 +170,7 @@ void TEST(QuaternionKinematics){
       x += 0.05 * Jinv * (conv_quat2arr(target)-y);                  //simulate a time step (only kinematically)
       G.setJointState(x);
       G.watch(false, STRING("test quaternion task spaces -- time " <<t));
+      rai::wait(.01);
     }
   }
 }
@@ -192,8 +192,8 @@ void TEST(Copy){
   G2 >>FILE("z.2");
 
   charA g1,g2;
-  g1.readRaw(FILE("z.1"));
-  g2.readRaw(FILE("z.2"));
+  FILE("z.1") >>g1;
+  FILE("z.2") >>g2;
 
   CHECK_EQ(g1, g2, "copy operator failed!")
   cout <<"** copy operator success" <<endl;
@@ -257,11 +257,12 @@ void TEST(Contacts){
 
   G.swift()->cutoff =.5;
 
-  VectorFunction f = [&G](arr& y, arr& J, const arr& x) -> void {
+  VectorFunction f = [&G](const arr& x) -> arr {
     G.setJointState(x);
-    G.setJacModeAs(J);
     G.stepSwift();
-    G.kinematicsPenetration(y, J, .2);
+    arr y;
+    G.kinematicsPenetration(y, y.J(), .2);
+    return y;
   };
 
   x = G.getJointState();
@@ -304,11 +305,11 @@ void TEST(Limits){
     rndUniform(x,-2.,2.,false);
     checkJacobian(F->vf2(F->getFrames(G)),x,1e-4);
     for(uint t=0;t<10;t++){
-      auto lim = F->eval(F->getFrames(G));
-      cout <<"y=" <<lim.y <<"  " <<flush;
+      arr lim = F->eval(F->getFrames(G));
+      cout <<"y=" <<lim <<"  " <<std::flush;
 //      cout <<"J:" <<lim.J <<endl;
-      for(uint i=0;i<lim.y.N;i++) if(lim.y(i)<0.) lim.y(i)=0.; //penalize only positive
-      x -= 1. * pseudoInverse(lim.J) * lim.y;
+      for(uint i=0;i<lim.N;i++) if(lim(i)<0.) lim(i)=0.; //penalize only positive
+      x -= 1. * pseudoInverse(lim.J()) * lim;
       checkJacobian(F->vf2(F->getFrames(G)),x,1e-4);
       G.setJointState(x);
       G.watch();
@@ -340,7 +341,7 @@ void TEST(PlayStateSequence){
   generateSequence(X, 200, n);
   arr v(X.d1); v=0.;
   for(uint t=0;t<X.d0;t++){
-    C.setJointState(X[t]());
+    C.setJointState(X[t]);
     C.watch(false, STRING("replay of a state sequence -- time " <<t));
     rai::wait(.01);
   }
@@ -403,7 +404,7 @@ void TEST(FollowRedundantSequence){
   G.setJointState(x);
   rai::Frame *endeff = G.getFrame("arm7");
   G.kinematicsPos(y, NoArr, endeff, rel);
-  for(t=0;t<T;t++) Z[t]() += y; //adjust coordinates to be inside the arm range
+  for(t=0;t<T;t++) Z[t] += y; //adjust coordinates to be inside the arm range
   plot()->Line(Z);
   G.gl()->add(plot()());
   G.watch(false);
@@ -446,7 +447,7 @@ void TEST(Dynamics){
 
   arr u;
   bool friction=false;
-  VectorFunction diffEqn = [&G,&u,&friction](arr& y, arr&, const arr& x){
+  VectorFunction diffEqn = [&G,&u,&friction](const arr& x) -> arr{
     checkNan(x);
     G.setJointState(x[0]);
     if(!u.N) u.resize(x.d1).setZero();
@@ -455,8 +456,10 @@ void TEST(Dynamics){
     /*if(T2::addContactsToDynamics){
         G.contactsToForces(100.,10.);
       }*/
+    arr y;
     G.fwdDynamics(y, x[1], u, true);
     checkNan(y);
+    return y;
   };
   
   uint t,T=720,n=G.getJointStateDimension();
@@ -491,7 +494,7 @@ void TEST(Dynamics){
       text.clear() <<"t=" <<t <<"  torque controlled damping (acc = - vel)\n(checking consistency of forward and inverse dynamics),  energy=" <<G.getEnergy(qd);
     }else{
       //cout <<q <<qd <<qdd <<' ' <<G.getEnergy() <<endl;
-      arr x=cat(q, qd).reshape(2, q.N);
+      arr x=(q, qd).reshape(2, q.N);
       rai::rk4_2ndOrder(x, x, diffEqn, dt);
       q=x[0]; qd=x[1];
       if(t>300){

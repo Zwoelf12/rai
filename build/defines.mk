@@ -9,12 +9,13 @@ ARCH = $(shell uname -m)
 
 ifeq ($(RAI_CMAKE),1)
 DEPEND :=
-LPATHS += $(BASE)/../build
+LPATHS += ../build ../../build $(BASE)/../build
 LIBS += -lrai
 endif
 
 ifeq ($(JSON),1)
 DEPEND_UBUNTU += libjsoncpp-dev
+CXXFLAGS += -DRAI_JSON
 LIBS += -ljsoncpp
 endif
 
@@ -27,7 +28,7 @@ DEPEND_UBUNTU += python3-dev python3 python3-numpy python3-pip python3-distutils
 #pybind11-dev NO! don't use the ubuntu package. Instead use:
 #  pip3 install --user pybind11
 CXXFLAGS += -DRAI_PYBIND `python3 -m pybind11 --includes`
-LIBS += `python3m-config --ldflags`
+LIBS += `python3-config --ldflags`
 #CPATH := $(CPATH):$(BASE)/../pybind11/include::$(BASE)/../../pybind11/include
 
 # sudo update-alternatives --install /usr/bin/python3-config python3 /usr/bin/python3.7 0
@@ -287,10 +288,10 @@ DEPEND_UBUNTU += libopencv-dev
     %CPATH := $(CPATH):$(IFLAGS:\-I%=\:%\:) % is it possible to add the includes to the CPATH?
     LIBS      += `pkg-config --libs opencv-2.3.1`
   else 
-    CXXFLAGS  += -DRAI_OPENCV `pkg-config --cflags-only-other opencv`
-    CXXFLAGS += `pkg-config --cflags-only-I opencv`
+    CXXFLAGS  += -DRAI_OPENCV `pkg-config --cflags-only-other opencv4`
+    CXXFLAGS += `pkg-config --cflags-only-I opencv4`
     %CPATH := $(CPATH):$(IFLAGS:\-I%=\:%\:) % is it possible to add the includes to the CPATH?
-    LIBS      += `pkg-config --libs opencv`
+    LIBS      += `pkg-config --libs opencv4`
   endif
 endif
 

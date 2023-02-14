@@ -10,7 +10,6 @@
 
 #include "frame.h"
 #include "feature.h"
-#include "../Core/util.h"
 
 struct PairCollision;
 
@@ -34,7 +33,7 @@ struct ForceExchange : Dof, NonCopyable, GLDrawer {
   arr force;
   arr torque;
 
-  ForceExchange(Frame& a, Frame& b, ForceExchangeType _type, ForceExchange* copyContact=nullptr);
+  ForceExchange(Frame& a, Frame& b, ForceExchangeType _type, const ForceExchange* copyContact=nullptr);
   ~ForceExchange();
 
   void setZero();
@@ -51,7 +50,7 @@ struct ForceExchange : Dof, NonCopyable, GLDrawer {
   PairCollision* coll();
 
   void glDraw(OpenGL&);
-  void write(ostream& os) const;
+  virtual void write(ostream& os) const;
 };
 stdOutPipe(ForceExchange)
 

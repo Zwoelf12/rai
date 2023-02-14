@@ -10,7 +10,7 @@
 
 #include "CtrlTargets.h"
 
-ptr<CtrlObjective> CtrlSet::addObjective(const ptr<Feature>& f, ObjectiveType type, double transientStep) {
+shared_ptr<CtrlObjective> CtrlSet::addObjective(const shared_ptr<Feature>& f, ObjectiveType type, double transientStep) {
   std::shared_ptr<CtrlObjective> t = make_shared<CtrlObjective>();
   t->feat = f;
   t->type = type;
@@ -46,8 +46,7 @@ bool isFeasible(const CtrlSet& CS, const rai::Configuration& pathConfig, bool in
     if(o->type==OT_ineq || o->type==OT_eq) {
       if(!initOnly && o->transientStep>0. && o->movingTarget->isTransient) { isFeasible=false; break; }
       if(!initOnly || o->transientStep<=0.) {
-        arr y, J;
-        o->feat->eval(y, J, o->feat->getFrames(pathConfig));
+        arr y = o->feat->eval(o->feat->getFrames(pathConfig));
         if(o->type==OT_ineq) {
           for(double& yi : y) if(yi>eqPrecision) { isFeasible=false; break; }
         }
@@ -64,7 +63,7 @@ bool isFeasible(const CtrlSet& CS, const rai::Configuration& pathConfig, bool in
 CtrlSet operator+(const CtrlSet& A, const CtrlSet& B){
   CtrlSet CS;
   CS.objectives.resize(A.objectives.N+B.objectives.N);
-  CS.objectives.setVectorBlock(A.objectives, 0);
-  CS.objectives.setVectorBlock(B.objectives, A.objectives.N);
+  for(uint i=0;i<A.objectives.N;i++) CS.objectives.elem(i) = A.objectives.elem(i);
+  for(uint i=0;i<B.objectives.N;i++) CS.objectives.elem(A.objectives.N+i) = B.objectives.elem(i);
   return CS;
 }

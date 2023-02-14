@@ -19,7 +19,7 @@
 
 //===========================================================================
 
-//CtrlObjective::CtrlObjective(const char* _name, const ptr<Feature>& _feat, const ptr<CtrlReference>& _ref, double _kp, double _kd, const arr& _C)
+//CtrlObjective::CtrlObjective(const char* _name, const shared_ptr<Feature>& _feat, const shared_ptr<CtrlReference>& _ref, double _kp, double _kd, const arr& _C)
 //  : feat(_feat), name(name), ref(_ref), active(true), kp(_kp), kd(_kd), C(_C), status(AS_init){
 //}
 
@@ -29,8 +29,8 @@ arr CtrlObjective::getResidual(CtrlSolver& cp) {
 
 arr CtrlObjective::getValue(CtrlSolver& cp) {
   FrameL F = feat->getFrames(cp.komo.pathConfig, cp.komo.k_order);
-  arr y, J;
-  feat->eval(y, J, F);
+  arr y = feat->eval(F);
+  y.J_reset();
   return y;
 }
 
@@ -43,7 +43,7 @@ void CtrlObjective::resetState() { if(movingTarget) movingTarget->resetState(); 
 //  return zeros(y.N);
 //}
 
-void CtrlObjective::setRef(const ptr<CtrlMovingTarget>& _ref) {
+void CtrlObjective::setRef(const shared_ptr<CtrlMovingTarget>& _ref) {
   CHECK(!movingTarget, "ref is already set");
   movingTarget = _ref;
 }

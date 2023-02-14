@@ -2,6 +2,17 @@
 
 //===========================================================================
 
+void testMetronome(){
+  Metronome tic(.1);
+  for(;;){
+    tic.waitForTic();
+    cout <<"tic: " <<tic.tics <<" \t time:" <<rai::realTime() <<endl;
+    if(tic.tics>30) break;
+  }
+}
+
+//===========================================================================
+
 // Normal Thread struct
 struct MyThread: Thread{
   Var<double> x;
@@ -60,7 +71,7 @@ struct ComputeSum : Thread {
 
 void TEST(Way0){
   ComputeSum C;
-  C.x.set() = ARR(1., 2., 3.);
+  C.x.set() = arr{1., 2., 3.};
   C.open();
   C.step();
   C.close();
@@ -118,7 +129,7 @@ void TEST(Sorter){
   uint N=20;
 
   rai::Array<Var<int>> x(N);
-  rai::Array<ptr<PairSorter>> ps(N-1);
+  rai::Array<shared_ptr<PairSorter>> ps(N-1);
   for(uint i=0;i<N-1;i++)
     ps(i) = make_shared<PairSorter>(x(i), x(i+1));
 
@@ -195,6 +206,7 @@ void TEST(Logging){
 int MAIN(int argc,char** argv){
   rai::initCmdLine(argc, argv);
 
+  testMetronome();
   testThread();
   testSorter();
 

@@ -62,6 +62,9 @@ using std::cerr;
 #include "SWIFT_pair.h"
 #include "SWIFT_fileio.h"
 
+#pragma GCC diagnostic ignored "-Waddress"
+#pragma GCC diagnostic ignored "-Wunused-function"
+
 SWIFT_Scene *global_scene=nullptr;
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -955,7 +958,7 @@ bool SWIFT_Scene::Query_Intersection(
                 k += 2;
               }
             } catch(const char* msg) {
-              std::cerr <<"... catching error '" <<msg <<"' -- in pair " <<o1 <<' ' <<o2 <<endl;
+              cerr <<"... catching error '" <<msg <<"' -- in pair " <<o1 <<' ' <<o2 <<endl;
               throw std::pair<int,int>(o1,o2);
             }
             pair = pair->Next();
@@ -1027,7 +1030,7 @@ bool SWIFT_Scene::Query_Tolerance_Verification( bool early_exit,
                 k += 2;
             }
             } catch(const char* msg) {
-              std::cerr <<"... catching error '" <<msg <<"' -- in pair->Tolerance (" <<o1 <<' ' <<o2 <<") -- continuing!" <<endl;
+              cerr <<"... catching error '" <<msg <<"' -- in pair->Tolerance (" <<o1 <<' ' <<o2 <<") -- continuing!" <<endl;
 //              throw std::pair<int,int>(o1,o2);
             }
             pair = pair->Next();
@@ -1057,7 +1060,7 @@ bool SWIFT_Scene::Query_Tolerance_Verification( bool early_exit,
                     k += 2;
                 }
                 } catch(const char* msg) {
-//                  std::cerr <<"... catching error '" <<msg <<"' -- in pair->Tolerance (" <<o1 <<' ' <<o2 <<") -- continuing!" <<endl;
+//                  cerr <<"... catching error '" <<msg <<"' -- in pair->Tolerance (" <<o1 <<' ' <<o2 <<") -- continuing!" <<endl;
 //                  throw std::pair<int,int>(o1,o2);
                 }
             }

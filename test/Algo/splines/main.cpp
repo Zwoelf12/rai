@@ -1,13 +1,10 @@
 #include <Algo/spline.h>
-#include <Plot/plot.h>
+#include <Gui/plot.h>
 #include <Kin/kin.h>
 
 //==============================================================================
 
 void TEST(Basics){
-
-  double tau=.1;
-
   rai::Spline S;
   arr X = {1., 0., 0., 1.};  X.reshape(-1,1);
   arr T = {0., .5, .5, 1.};
@@ -47,7 +44,7 @@ void TEST(Basics){
 void TEST(Speed){
 
   uint N=1000000, n=2;
-  arr X = randn(N, 2);
+  arr X = randn(N, n);
   arr T = integral(rand(N)+0.1);
 //  cout <<X <<endl <<T <<endl;
 
@@ -74,10 +71,11 @@ void TEST(Path){
       <<"\npoints= " <<P.knotPoints <<endl;
 
   //-- gradient check of velocity
-  VectorFunction Test = [&P](arr& y, arr& J, const arr& x) -> void {
+  fct Test = [&P](const arr& x) -> arr {
     CHECK_EQ(x.N,1,"");
-    y = P.getPosition(x(0));
-    if(!!J) J = P.getVelocity(x(0));
+    arr y = P.getPosition(x(0));
+    y.J() = P.getVelocity(x(0));
+    return y;
   };
   for(uint k=0;k<10;k++){
     arr x(1);

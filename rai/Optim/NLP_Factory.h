@@ -1,12 +1,12 @@
 #pragma once
 
-#include "MathematicalProgram.h"
+#include "NLP.h"
 
-/** The MathematicalProgram class is an interface for /solvers/: it provides access to anything that a solver
- *  wants to query. The MathematicalProgram_Factory class is an interface for /users/: It makes it easier to
- *  declare an NLP (as an alternative to overloading the virtuals of MathematicalProgram). But the semantics
- *  of the setting methods are perfectly analogous to the virtual methods of MathematicalProgram */
-struct NLP_Factory : MathematicalProgram {
+/** The NLP class is an interface for /solvers/: it provides access to anything that a solver
+ *  wants to query. The NLP_Factory class is an interface for /users/: It makes it easier to
+ *  declare an NLP (as an alternative to overloading the virtuals of NLP). But the semantics
+ *  of the setting methods are perfectly analogous to the virtual methods of NLP */
+struct NLP_Factory : NLP {
   void *userData;
   uint dim;
   ObjectiveTypeA featureTypes;
@@ -29,7 +29,7 @@ struct NLP_Factory : MathematicalProgram {
   //-- helpers for analysis
   void checkGradients(const arr& x, double eps = 1e-4);
 
-  //-- overloads of MathematicalProgram virtuals
+  //-- overloads of NLP virtuals
 
   void getFeatureTypes(ObjectiveTypeA& _featureTypes){ _featureTypes=featureTypes; }
   void evaluate(arr& phi, arr& J, const arr& x){

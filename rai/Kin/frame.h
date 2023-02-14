@@ -8,10 +8,10 @@
 
 #pragma once
 
-#include "../Core/util.h"
 #include "../Geo/geo.h"
 #include "../Core/graph.h"
 #include "../Geo/mesh.h"
+#include "../Geo/signedDistanceFunctions.h"
 
 /* TODO:
  * replace the types by more fundamental:
@@ -28,8 +28,8 @@ struct Shape;
 struct Inertia;
 struct ForceExchange;
 struct ParticleDofs;
-enum JointType { JT_none=0, JT_hingeX, JT_hingeY, JT_hingeZ, JT_transX, JT_transY, JT_transZ, JT_transXY, JT_trans3, JT_transXYPhi, JT_transYPhi, JT_universal, JT_rigid, JT_quatBall, JT_phiTransXY, JT_XBall, JT_free, JT_tau };
-enum BodyType  { BT_none=-1, BT_dynamic=0, BT_kinematic, BT_static };
+enum JointType { JT_none=0, JT_hingeX, JT_hingeY, JT_hingeZ, JT_transX, JT_transY, JT_transZ, JT_transXY, JT_trans3, JT_transXYPhi, JT_transYPhi, JT_universal, JT_rigid, JT_quatBall, JT_phiTransXY, JT_XBall, JT_free, JT_generic, JT_tau };
+enum BodyType  { BT_none=-1, BT_dynamic=0, BT_kinematic, BT_static, BT_soft };
 }
 
 typedef rai::Array<rai::Frame*> FrameL;
@@ -75,6 +75,7 @@ struct Frame : NonCopyable {
   String name;             ///< name
   Frame* parent=nullptr;   ///< parent frame
   FrameL children;         ///< list of children
+  Frame* prev=0;           ///< same frame in the previous time slice - if time sliced
 
  protected:
   Transformation Q=0;        ///< relative transform to parent
@@ -89,15 +90,15 @@ struct Frame : NonCopyable {
   void calc_Q_from_parent(bool enforceWithinJoint = true);
 
  public:
-  double tau=0.;             ///< frame's relative time transformation (could be thought as part of the transformation X in space-time)
-  std::shared_ptr<Graph> ats;                 ///< list of any-type attributes
+  double tau=0.;              ///< frame's relative time transformation (could be thought as part of the transformation X in space-time)
+  std::shared_ptr<Graph> ats; ///< list of any-type attributes
 
   //attachments to the frame
   Joint* joint=nullptr;          ///< this frame is an articulated joint
   Shape* shape=nullptr;          ///< this frame has a (collision or visual) geometry
   Inertia* inertia=nullptr;      ///< this frame has inertia (is a mass)
   Array<ForceExchange*> forces;  ///< this frame exchanges forces with other frames
-  ParticleDofs* particleDofs=nullptr;
+  ParticleDofs* particleDofs=nullptr; ///< this frame is a set of particles that are dofs themselves
 
   Frame(Configuration& _C, const Frame* copyFrame=nullptr);
   Frame(Frame* _parent);
@@ -115,25 +116,27 @@ struct Frame : NonCopyable {
   Transformation_Qtoken set_Q() { return Transformation_Qtoken(*this); }
 
   //structural operations
+  Frame& setParent(Frame* _parent, bool keepAbsolutePose_and_adaptRelativePose=false, bool checkForLoop=false);
+  void unLink();
   Frame* insertPreLink(const rai::Transformation& A=0);
   Frame* insertPostLink(const rai::Transformation& B=0);
-  void unLink();
-  Frame& setParent(Frame* _parent, bool keepAbsolutePose_and_adaptRelativePose=false, bool checkForLoop=false);
 
   //structural information/retrieval
   bool isChildOf(const Frame* par, int order=1) const;
-  void getRigidSubFrames(FrameL& F); ///< recursively collect all rigidly attached sub-frames (e.g., shapes of a link), (THIS is not included)
-  void getPartSubFrames(FrameL& F); ///< recursively collect all frames of this part
-  void getSubtree(FrameL& F);
+  void getRigidSubFrames(FrameL& F, bool includeRigidJoints=false) const; ///< recursively collect all rigidly attached sub-frames (e.g., shapes of a link), (THIS is not included)
+  void getPartSubFrames(FrameL& F) const; ///< recursively collect all frames of this part
+  void getSubtree(FrameL& F) const;
   Frame* getRoot();
   FrameL getPathToRoot();
   Frame* getUpwardLink(rai::Transformation& Qtotal=NoTransformation, bool untilPartBreak=false) const; ///< recurse upward BEFORE the next joint and return relative transform (this->Q is not included!b)
   Frame* getDownwardLink(bool untilPartBreak=false) const; ///< recurse upward BEFORE the next joint and return relative transform (this->Q is not included!b)
   FrameL getPathToUpwardLink(bool untilPartBreak=false); ///< recurse upward BEFORE the next joint and return relative transform (this->Q is not included!b)
-  const char* isPart();
+  const char* isPart() const;
+  Dof* getDof() const;
 
   void prefixSubtree(const char* prefix);
   void computeCompoundInertia();
+  void transformToDiagInertia();
 
   //I/O
   void read(const Graph& ats);
@@ -145,11 +148,12 @@ struct Frame : NonCopyable {
   Frame& setPose(const rai::Transformation& _X);
   Frame& setPosition(const arr& pos);
   Frame& setQuaternion(const arr& quat);
+  Frame& setRelativePose(const rai::Transformation& _Q);
   Frame& setRelativePosition(const arr& pos);
   Frame& setRelativeQuaternion(const arr& quat);
   Frame& setPointCloud(const arr& points, const byteA& colors= {});
   Frame& setConvexMesh(const arr& points, const byteA& colors= {}, double radius=0.);
-  Frame& setMesh(const arr& points, const byteA& colors= {}, double radius=0.);
+  Frame& setMesh(const rai::Mesh& m);
   Frame& setColor(const arr& color);
   Frame& setJoint(rai::JointType jointType);
   Frame& setContact(int cont);
@@ -181,21 +185,34 @@ stdOutPipe(Frame)
 //===========================================================================
 
 struct Dof {
-  Frame* frame=0;      ///< this is the frame that Joint articulates! I.e., the output frame
+  Frame* frame=0;    ///< this is the frame that this dof articulates! I.e., the output frame
   bool active=true;  ///< if false, this dof is not considered part of the configuration's q-vector
   uint dim=UINT_MAX;
   uint qIndex=UINT_MAX;
-  arr  limits;    ///< joint limits (lo, up, [maxvel, maxeffort])
-  Joint* mimic=0; ///< if non-nullptr, this joint's state is identical to another's
+  arr  limits;       ///< joint limits (lo, up, [maxvel, maxeffort])
+  Joint* mimic=0;    ///< if non-nullptr, this joint's state is identical to another's
+  JointL mimicers;   ///< list of mimicing joints
+  bool isStable=false;
+
+  // sampling info:
+  double sampleUniform=0.; //prob for uniform initialization within limits
+  double sampleSdv=.01; //sdv of gaussian around default
+  arr q0; //mean of gaussian, if not defined -> copyX from prev
 
   virtual ~Dof() {}
   virtual void setDofs(const arr& q, uint n=0) = 0;
   virtual arr calcDofsFromConfig() const = 0;
+  arr getDofState();
   virtual String name() const = 0;
+
+  void setActive(bool _active);
 
   const Joint* joint() const;
   const ForceExchange* fex() const;
+
+  virtual void write(std::ostream& os) const;
 };
+stdOutPipe(Dof)
 
 //===========================================================================
 
@@ -203,12 +220,10 @@ struct Dof {
 struct Joint : Dof, NonCopyable {
 
   // joint information
-  byte generator;    ///< (7bits), h in Featherstone's code (indicates basis vectors of the Lie algebra, but including the middle quaternion w)
-  arr q0;            ///< joint null position
+  //  byte generator;    ///< (7bits), h in Featherstone's code (indicates basis vectors of the Lie algebra, but including the middle quaternion w)
+  String code;       ///< for JT_generic: code "txyzwabc" to indicate transformations; dim==code.N
   double H=1.;       ///< control cost scalar
   double scale=1.;   ///< scaling robot-q = scale * q-vector
-
-  JointL mimicers;      ///< list of mimicing joints
 
   Vector axis=0;          ///< joint axis (same as X.rot.getX() for standard hinge joints)
   Enum<JointType> type;   ///< joint type
@@ -242,6 +257,7 @@ struct Joint : Dof, NonCopyable {
   void makeRigid();
   void makeFree(double H_cost=0.);
   void setType(JointType _type);
+  void setGeneric(const char* _code);
   void flip();
 
   void read(const Graph& G);
@@ -280,15 +296,17 @@ struct Shape : NonCopyable, GLDrawer {
   Frame& frame;
   Enum<ShapeType> _type;
   arr size;
-  ptr<Mesh> _mesh;
-  ptr<Mesh> _sscCore;
+  shared_ptr<Mesh> _mesh;
+  shared_ptr<Mesh> _sscCore;
+  shared_ptr<SDF_GridData> _sdf;
   char cont=0;           ///< are contacts registered (or filtered in the callback)
 
   double radius() { if(size.N) return size(-1); return 0.; }
   Enum<ShapeType>& type() { return _type; }
   Mesh& mesh() { if(!_mesh) _mesh = make_shared<Mesh>();  return *_mesh; }
   Mesh& sscCore() { if(!_sscCore) _sscCore = make_shared<Mesh>();  return *_sscCore; }
-  double alpha() { arr& C=mesh().C; if(C.N==4) return C(3); return 1.; }
+  SDF_GridData& sdf() { if(!_sdf) _sdf = make_shared<SDF_GridData>();  return *_sdf; }
+  double alpha() { arr& C=mesh().C; if(C.N==4 || C.N==2) return C(-1); return 1.; }
 
   void createMeshes();
   shared_ptr<ScalarFunction> functional(bool worldCoordinates=true);

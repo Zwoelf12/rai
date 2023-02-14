@@ -34,7 +34,7 @@ F_qItself::F_qItself(PickMode pickMode, const StringA& picks, const rai::Configu
       frameIDs.setAppend(f->ID);
     }
   }else if(pickMode==byExcludeJointNames) {
-    for(rai::Dof* j: C.activeJoints) {
+    for(rai::Dof* j: C.activeDofs) {
       if(picks.contains(j->frame->name)) continue;
       frameIDs.setAppend(j->frame->ID);
     }
@@ -54,7 +54,7 @@ void F_qItself::phi(arr& q, arr& J, const rai::Configuration& C) {
   if(!frameIDs.nd) {
     q = C.getJointState();
     if(relative_q0) {
-      for(rai::Dof* j: C.activeJoints) if(j->joint() && j->dim==1 && j->joint()->q0.N) q(j->qIndex) -= j->joint()->q0.scalar();
+      for(rai::Dof* j: C.activeDofs) if(j->joint() && j->dim==1 && j->joint()->q0.N) q(j->qIndex) -= j->joint()->q0.scalar();
     }
     if(!!J) J.setId(q.N);
   } else {
@@ -99,7 +99,7 @@ void F_qItself::phi(arr& q, arr& J, const rai::Configuration& C) {
 
 void F_qItself::phi2(arr& q, arr& J, const FrameL& F) {
   if(order!=0){
-    phi_finiteDifferenceReduce(q, J, F);
+    Feature::phi2(q, J, F);
     return;
   }
   uint n=dim_phi2(F);
@@ -192,24 +192,63 @@ uint F_qItself::dim_phi2(const FrameL& F){
 
 //===========================================================================
 
+void F_q0Bias::phi2(arr& y, arr& J, const FrameL& F){
+  uint n=dim_phi2(F);
+  if(!n){ y.clear(); J.clear(); return; }
+  rai::Configuration& C = F.last()->C;
+  CHECK(C._state_q_isGood, "");
+  C.kinematicsZero(y, J, n);
+  uint m=0;
+  for(rai::Frame* f:F) {
+    rai::Dof* d = f->getDof();
+    if(!d || !d->q0.N) continue;
+    for(uint k=0; k<d->dim; k++) {
+      if(d->active){
+        y.elem(m) = C.q.elem(d->qIndex+k);
+      }else{
+        y.elem(m) = C.qInactive.elem(d->qIndex+k);
+      }
+      y.elem(m) -= d->q0(k);
+      if(!!J && d->active) J.elem(m, d->qIndex+k) = 1.;
+      m++;
+    }
+  }
+  CHECK_EQ(n, m, "");
+}
+
+uint F_q0Bias::dim_phi2(const FrameL& F){
+  uint m=0;
+  for(rai::Frame* f:F) {
+    rai::Dof* d = f->getDof();
+    if(!d || !d->q0.N) continue;
+    CHECK_EQ(d->q0.N, d->dim, "");
+    m+=d->dim;
+  }
+  return m;
+}
+
+//===========================================================================
+
 void F_qZeroVel::phi2(arr& y, arr& J, const FrameL& F){
   CHECK_EQ(order, 1, "");
-  F_qItself()
+  y = F_qItself()
       .setOrder(order)
-      .eval(y, J, F);
+      .eval(F);
+  //J = y.J();
 #if 1
   rai::Frame *f = F.last();
   if(f->joint->type==rai::JT_transXYPhi) {
-    arr s = ARR(10., 10., 1.);
+    arr s = arr{10., 10., 1.};
     y = s%y;
-    if(!!J) J = s%J;
+    //if(!!J) J = s%J;
   }
   if(f->joint->type==rai::JT_free) {
-    arr s = ARR(10., 10., 10., 1., 1., 1., 1.);
+    arr s = arr{10., 10., 10., 1., 1., 1., 1.};
     y = s%y;
-    if(!!J) J = s%J;
+    //if(!!J) J = s%J;
   }
 #endif
+  if(!!J) J = y.J_reset();
 }
 
 uint F_qZeroVel::dim_phi2(const FrameL& F){
@@ -258,10 +297,11 @@ rai::Array<rai::Joint*> getMatchingJoints(const ConfigurationL& Ktuple, bool zer
 DofL getDofs(const FrameL& F){
   DofL dofs;
   for(rai::Frame *f: F){
-    rai::Joint *j = f->joint;
-    if(j && j->limits.N) dofs.append(j);
-    for(rai::ForceExchange* fex:f->forces){
-      if(fex->sign(f)>0.) dofs.append(fex);
+    if(f->joint && f->joint->active){
+      if(f->joint->limits.N) dofs.append(f->joint);
+    }
+    for(rai::ForceExchange* fex:f->forces) if(&fex->a==f){
+      if(fex->active && fex->limits.N) dofs.append(fex);
     }
   }
   return dofs;
@@ -273,18 +313,26 @@ void F_qLimits::phi2(arr& y, arr& J, const FrameL& F){
   CHECK(F.last()->C._state_q_isGood, "");
   uint m=0;
   DofL dofs = getDofs(F);
-  for(rai::Dof* dof: dofs){
-    uint d=dof->dim;
-    for(uint k=0; k<d; k++) { //in case joint has multiple dimensions
+  for(rai::Dof* dof: dofs) if(dof->limits.N){
+    for(uint k=0; k<dof->dim; k++) { //in case joint has multiple dimensions
       double lo = dof->limits(2*k+0);
       double up = dof->limits(2*k+1);
-      uint i = dof->qIndex+k;
-      y.elem(m) = lo - F.last()->C.q(i);
-      if(!!J) J.elem(m, i) -= 1.;
-      m++;
-      y.elem(m) = F.last()->C.q(i) - up;
-      if(!!J) J.elem(m, i) += 1.;
-      m++;
+      if(up>=lo){
+        uint i = dof->qIndex+k;
+        double qi = F.last()->C.q(i);
+//        if(true){
+//          if(qi < lo) LOG(0) <<dof->name() <<' ' <<k <<' ' <<qi <<'<' <<lo <<" violates lower limit";
+//          if(qi > up) LOG(0) <<dof->name() <<' ' <<k <<' ' <<qi <<'>' <<up <<" violates upper limit";
+//        }
+        y.elem(m) = lo - qi;
+        if(!!J) J.elem(m, i) -= 1.;
+        m++;
+        y.elem(m) = qi - up;
+        if(!!J) J.elem(m, i) += 1.;
+        m++;
+      }else{
+        m+=2;
+      }
     }
   }
   CHECK_EQ(m, M, "");
@@ -293,7 +341,7 @@ void F_qLimits::phi2(arr& y, arr& J, const FrameL& F){
 uint F_qLimits::dim_phi2(const FrameL& F) {
   uint m=0;
   DofL dofs = getDofs(F);
-  for(rai::Dof* dof: dofs) m += 2*dof->dim;
+  for(rai::Dof* dof: dofs) if(dof->limits.N) m += 2*dof->dim;
   return m;
 }
 
@@ -338,7 +386,7 @@ uint F_qQuaternionNorms::dim_phi2(const FrameL& F) {
 
 void F_qQuaternionNorms::setAllActiveQuats(const rai::Configuration& C){
   frameIDs.clear();
-  for(const rai::Dof* dof:C.activeJoints) {
+  for(const rai::Dof* dof:C.activeDofs) {
     const rai::Joint* j = dof->joint();
     if(j && (j->type==rai::JT_quatBall || j->type==rai::JT_free || j->type==rai::JT_XBall)) frameIDs.append(j->frame->ID);
   }
@@ -389,7 +437,23 @@ uintA getNonSwitchedFrames(const FrameL& A, const FrameL& B) {
     if(f0->joint->type!=f1->joint->type) continue;
     if(f0->joint->mimic || f1->joint->mimic) continue;
     if(f0->ID - f0->parent->ID != f1->ID-f1->parent->ID) continue; //comparing the DIFFERENCE in IDs between parent and joint
+    if(f0->forces.N != f1->forces.N) continue;
     nonSwitchedFrames.append(i);
   }
   return nonSwitchedFrames;
 }
+
+uintA getSwitchedFrames(const FrameL& A, const FrameL& B) {
+  uintA switchedFrames;
+  CHECK_EQ(A.N, B.N, "");
+
+  for(uint i=0;i<A.N;i++) {
+    rai::Frame* f0 = A.elem(i);
+    rai::Frame* f1 = B.elem(i);
+    if(!f0->parent && !f1->parent) continue;
+    if(f0->parent && f1->parent && f0->ID - f0->parent->ID == f1->ID - f1->parent->ID) continue;
+    switchedFrames.append(i);
+  }
+  return switchedFrames;
+}
+

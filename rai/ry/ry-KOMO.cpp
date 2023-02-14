@@ -105,11 +105,12 @@ void init_KOMO(pybind11::module& m) {
 //      pybind11::arg("scale")=double(1.),
 //      pybind11::arg("target")=std::vector<double>())
 
-  .def("addSquaredQuaternionNorms",
-       &KOMO::addSquaredQuaternionNorms,
+  .def("addQuaternionNorms",
+       &KOMO::addQuaternionNorms,
        "",
        pybind11::arg("times")=arr(),
-       pybind11::arg("scale")=3.
+       pybind11::arg("scale")=3.,
+       pybind11::arg("hard")=true
                               )
 
   .def("add_qControlObjective",
@@ -123,20 +124,18 @@ void init_KOMO(pybind11::module& m) {
        pybind11::arg("deltaToStep")=0
                                         )
 
-  .def("addSwitch_stable",
-       &KOMO::addSwitch_stable,
+  .def("addModeSwitch",
+       &KOMO::addModeSwitch,
        "",
-       pybind11::arg("startTime"),
-       pybind11::arg("endTime"),
-       pybind11::arg("prevFromFrame"),
-       pybind11::arg("fromFrame"),
-       pybind11::arg("toFrame"),
+       pybind11::arg("times"),
+       pybind11::arg("newMode"),
+       pybind11::arg("frames"),
        pybind11::arg("firstSwitch")=true
        )
 
-  .def("addSwitch_magic", &KOMO::addSwitch_magic)
+//  .def("addSwitch_magic", &KOMO::addSwitch_magic)
 
-  .def("addSwitch_dynamicTrans", &KOMO::addSwitch_dynamicTrans)
+//  .def("addSwitch_dynamicTrans", &KOMO::addSwitch_dynamicTrans)
 
   .def("addInteraction_elasticBounce",
        &KOMO::addContact_elasticBounce,
@@ -177,15 +176,17 @@ void init_KOMO(pybind11::module& m) {
 
   .def("getFrameState", &KOMO::getConfiguration_X)
 
+  .def("getPath_qOrg", &KOMO::getPath_qOrg)
+
   .def("getPathFrames", &KOMO::getPath_X)
 //  .def("getPathFrames", [](std::shared_ptr<KOMO>& self, const ry::I_StringA& frames) {
 //    arr X = self->getPath_frames(I_conv(frames));
-//    return pybind11::array(X.dim(), X.p);
+//    return arr2numpy(X);
 //  })
 
   .def("getPathTau", [](std::shared_ptr<KOMO>& self) {
     arr X = self->getPath_tau();
-    return pybind11::array(X.dim(), X.p);
+    return arr2numpy(X);
   })
 
   .def("getForceInteractions", [](std::shared_ptr<KOMO>& self) {
@@ -216,12 +217,15 @@ void init_KOMO(pybind11::module& m) {
 
 //-- display
 
-  .def("view", &KOMO::view)
-    .def("view_play",
-	 &KOMO::view_play,
-	 "",
-	 pybind11::arg("pause"),
-       pybind11::arg("delay"),
+  .def("view", &KOMO::view,
+       "",
+       pybind11::arg("pause") = false,
+       pybind11::arg("txt") = nullptr)
+
+  .def("view_play", &KOMO::view_play,
+       "",
+       pybind11::arg("pause") = false,
+       pybind11::arg("delay") = 0.1,
 	 pybind11::arg("saveVideoPath") = nullptr)
 
   .def("view_close", [](shared_ptr<KOMO>& self) {

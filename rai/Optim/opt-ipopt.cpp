@@ -10,18 +10,20 @@
 
 #ifdef RAI_IPOPT
 
+#include "../Core/util.h"
+
 #include <coin/IpTNLP.hpp>
 #include <coin/IpIpoptApplication.hpp>
 
+
 struct Conv_MP_Ipopt : Ipopt::TNLP {
-  MathematicalProgram& P;
+  shared_ptr<NLP> P;
   arr x_init;
   arr x, phi_x, J_x;
-  ObjectiveTypeA featureTypes;
 
   //-- buffers to avoid recomputing gradients
 
-  Conv_MP_Ipopt(MathematicalProgram& P);
+  Conv_MP_Ipopt(const shared_ptr<NLP>& P);
 
   virtual ~Conv_MP_Ipopt();
 
@@ -59,9 +61,7 @@ struct Conv_MP_Ipopt : Ipopt::TNLP {
                                  Ipopt::IpoptCalculatedQuantities* ip_cq);
 };
 
-Conv_MP_Ipopt::Conv_MP_Ipopt(MathematicalProgram& P) : P(P) {
-  P.getFeatureTypes(featureTypes);
-}
+Conv_MP_Ipopt::Conv_MP_Ipopt(const shared_ptr<NLP>& P) : P(P) {}
 
 Conv_MP_Ipopt::~Conv_MP_Ipopt() {}
 
@@ -112,10 +112,10 @@ arr IpoptInterface::solve(const arr& x_init) {
 }
 
 bool Conv_MP_Ipopt::get_nlp_info(Ipopt::Index& n, Ipopt::Index& m, Ipopt::Index& nnz_jac_g, Ipopt::Index& nnz_h_lag, Ipopt::TNLP::IndexStyleEnum& index_style) {
-  n = P.getDimension();
+  n = P->getDimension();
 
   m=0;
-  for(auto t:featureTypes) {
+  for(auto t:P->featureTypes) {
     if(t==OT_ineq) m++;
     if(t==OT_eq) m++;
   }
@@ -123,12 +123,15 @@ bool Conv_MP_Ipopt::get_nlp_info(Ipopt::Index& n, Ipopt::Index& m, Ipopt::Index&
   nnz_h_lag = n*n;
   index_style = TNLP::C_STYLE;
 
+  CHECK(n>0, "");
+  CHECK(m>0, "");
+
   return true;
 }
 
 bool Conv_MP_Ipopt::get_bounds_info(Ipopt::Index n, Ipopt::Number* x_l, Ipopt::Number* x_u, Ipopt::Index m, Ipopt::Number* g_l, Ipopt::Number* g_u) {
   arr bounds_lo, bounds_up;
-  P.getBounds(bounds_lo, bounds_up);
+  P->getBounds(bounds_lo, bounds_up);
   for(int i=0; i<n; i++) {
     double l = bounds_lo.elem(i), u = bounds_up.elem(i);
     if(l<u) {
@@ -140,7 +143,7 @@ bool Conv_MP_Ipopt::get_bounds_info(Ipopt::Index n, Ipopt::Number* x_l, Ipopt::N
   }
 
   uint j=0;
-  for(auto t:featureTypes) {
+  for(auto t:P->featureTypes) {
     if(t==OT_ineq) { g_l[j]=-2e19; g_u[j]=0.; j++; }
     if(t==OT_eq) { g_l[j]=g_u[j]=0.; j++; }
   }
@@ -157,7 +160,7 @@ bool Conv_MP_Ipopt::get_starting_point(Ipopt::Index n, bool init_x, Ipopt::Numbe
     CHECK_EQ((int)x_init.N, n, "");
     for(int i=0; i<n; i++) x[i] = x_init.elem(i);
   }else{
-    arr x0 = P.getInitializationSample();
+    arr x0 = P->getInitializationSample();
     CHECK_EQ((int)x0.N, n, "");
     for(int i=0; i<n; i++) x[i] = x0.elem(i);
   }
@@ -168,13 +171,13 @@ bool Conv_MP_Ipopt::get_starting_point(Ipopt::Index n, bool init_x, Ipopt::Numbe
 bool Conv_MP_Ipopt::eval_f(Ipopt::Index n, const Ipopt::Number* _x, bool new_x, Ipopt::Number& obj_value) {
   if(new_x) {
     x.setCarray(_x, n);
-    P.evaluate(phi_x, J_x, x);
+    P->evaluate(phi_x, J_x, x);
   }
 
   double f=0.;
   for(uint i=0; i<phi_x.N; i++) {
-    if(featureTypes(i)==OT_f) f += phi_x(i);
-    if(featureTypes(i)==OT_sos) f += rai::sqr(phi_x(i));
+    if(P->featureTypes(i)==OT_f) f += phi_x(i);
+    if(P->featureTypes(i)==OT_sos) f += rai::sqr(phi_x(i));
   }
 
   obj_value = f;
@@ -185,13 +188,13 @@ bool Conv_MP_Ipopt::eval_f(Ipopt::Index n, const Ipopt::Number* _x, bool new_x, 
 bool Conv_MP_Ipopt::eval_grad_f(Ipopt::Index n, const Ipopt::Number* _x, bool new_x, Ipopt::Number* grad_f) {
   if(new_x) {
     x.setCarray(_x, n);
-    P.evaluate(phi_x, J_x, x);
+    P->evaluate(phi_x, J_x, x);
   }
 
   arr coeff=zeros(phi_x.N);
   for(uint i=0; i<phi_x.N; i++) {
-    if(featureTypes(i)==OT_f) coeff(i) += 1.;                // direct cost term
-    if(featureTypes(i)==OT_sos) coeff(i) += 2.* phi_x(i);    // sumOfSqr terms
+    if(P->featureTypes(i)==OT_f) coeff(i) += 1.;                // direct cost term
+    if(P->featureTypes(i)==OT_sos) coeff(i) += 2.* phi_x(i);    // sumOfSqr terms
     //      if(muLB     && featureTypes(i)==OT_ineq                 ) coeff(i) -= (muLB/phi_x(i)); //log barrier, check feasibility
     //      if(mu       && featureTypes(i)==OT_ineq && I_lambda_x(i)) coeff(i) += 2.*mu*phi_x(i);  //g-penalty
     //      if(lambda.N && featureTypes(i)==OT_ineq && lambda(i)>0. ) coeff(i) += lambda(i);       //g-lagrange terms
@@ -208,14 +211,14 @@ bool Conv_MP_Ipopt::eval_grad_f(Ipopt::Index n, const Ipopt::Number* _x, bool ne
 bool Conv_MP_Ipopt::eval_g(Ipopt::Index n, const Ipopt::Number* _x, bool new_x, Ipopt::Index m, Ipopt::Number* _g) {
   if(new_x) {
     x.setCarray(_x, n);
-    P.evaluate(phi_x, J_x, x);
+    P->evaluate(phi_x, J_x, x);
   }
 
   arr g;
   g.referTo(_g, m);
   int j=0;
   for(uint i=0; i<phi_x.N; i++) {
-    if(featureTypes(i)==OT_ineq || featureTypes(i)==OT_eq) { g(j)=phi_x(i); j++; }
+    if(P->featureTypes(i)==OT_ineq || P->featureTypes(i)==OT_eq) { g(j)=phi_x(i); j++; }
   }
   CHECK_EQ(j, m, "");
 
@@ -224,12 +227,12 @@ bool Conv_MP_Ipopt::eval_g(Ipopt::Index n, const Ipopt::Number* _x, bool new_x, 
 
 bool Conv_MP_Ipopt::eval_jac_g(Ipopt::Index n, const Ipopt::Number* _x, bool new_x, Ipopt::Index m, Ipopt::Index nele_jac, Ipopt::Index* iRow, Ipopt::Index* jCol, Ipopt::Number* values) {
   if(!_x) {
-    x = P.getInitializationSample();
-    P.evaluate(phi_x, J_x, x);
+    x = P->getInitializationSample();
+    P->evaluate(phi_x, J_x, x);
   }
   if(new_x) {
     x.setCarray(_x, n);
-    P.evaluate(phi_x, J_x, x);
+    P->evaluate(phi_x, J_x, x);
   }
 
   //construct trivial (sparse linear identity) mapping from all features to selection
@@ -237,7 +240,7 @@ bool Conv_MP_Ipopt::eval_jac_g(Ipopt::Index n, const Ipopt::Number* _x, bool new
   M.sparse().resize(m, J_x.d0, m);
   uint j=0;
   for(uint i=0; i<phi_x.N; i++) {
-    if(featureTypes(i)==OT_ineq || featureTypes(i)==OT_eq) {
+    if(P->featureTypes(i)==OT_ineq || P->featureTypes(i)==OT_eq) {
       M.sparse().entry(j, i, j) = 1.;
       j++;
     }
@@ -273,8 +276,8 @@ bool Conv_MP_Ipopt::eval_h(Ipopt::Index n, const Ipopt::Number* _x, bool new_x, 
   arr coeff=zeros(phi_x.N);
   bool hasFterms=false;
   for(uint i=0; i<phi_x.N; i++) {
-    if(featureTypes(i)==OT_f) hasFterms = true;
-    if(featureTypes(i)==OT_sos) coeff(i) += 2.;
+    if(P->featureTypes(i)==OT_f) hasFterms = true;
+    if(P->featureTypes(i)==OT_sos) coeff(i) += 2.;
   }
   arr tmp = J_x;
   arr sqrtCoeff = sqrt(coeff);
@@ -283,7 +286,7 @@ bool Conv_MP_Ipopt::eval_h(Ipopt::Index n, const Ipopt::Number* _x, bool new_x, 
 
   if(hasFterms) {
     arr H_x;
-    P.getFHessian(H_x, x);
+    P->getFHessian(H_x, x);
     H_x.sparse();
     H += H_x;
   }

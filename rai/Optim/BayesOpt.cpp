@@ -8,10 +8,10 @@
 
 #include "BayesOpt.h"
 #include "RidgeRegression.h"
-//#include "../Plot/plot.h"
+//#include "../Gui/plot.h"
 //#include "../Algo/MLcourse.h"
 
-BayesOpt::BayesOpt(const ScalarFunction& _f, const arr& bounds_lo, const arr& bounds_hi, double init_lengthScale, double prior_var, OptOptions o)
+BayesOpt::BayesOpt(const ScalarFunction& _f, const arr& bounds_lo, const arr& bounds_hi, double init_lengthScale, double prior_var, rai::OptOptions o)
   : f(_f),
     bounds_lo(bounds_lo), bounds_hi(bounds_hi),
     f_now(nullptr), f_smaller(nullptr),
@@ -25,8 +25,8 @@ BayesOpt::BayesOpt(const ScalarFunction& _f, const arr& bounds_lo, const arr& bo
 
   kernel_now->type = kernel_smaller->type = DefaultKernelFunction::Gauss; //TODO: ugly!!
 
-  kernel_now->hyperParam1 = ARR(init_lengthScale);
-  kernel_now->hyperParam2 = ARR(prior_var);
+  kernel_now->hyperParam1 = arr{init_lengthScale};
+  kernel_now->hyperParam2 = arr{prior_var};
   kernel_smaller->hyperParam1 = kernel_now->hyperParam1;
   kernel_smaller->hyperParam1 /= 2.;
   kernel_smaller->hyperParam2 = kernel_now->hyperParam2;

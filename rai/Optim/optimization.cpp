@@ -8,36 +8,87 @@
 
 #include "optimization.h"
 
-uint eval_count=0;
-Singleton<OptOptions> globalOptOptions;
-OptOptions *__globalOptOptions=0;
-ObjectiveTypeA __NoTermTypeA(new SpecialArray(SpecialArray::ST_NoArr));
-ObjectiveTypeA& NoObjectiveTypeA = __NoTermTypeA;
+#include <math.h>
 
-template<> const char* rai::Enum<ObjectiveType>::names []= {
-  "none", "f", "sos", "ineq", "eq", nullptr
-};
+uint eval_count=0;
+
+//===========================================================================
+
+double Conv_NLP_ScalarProblem::scalar(arr& g, arr& H, const arr& x){
+  arr phi, J;
+  P->evaluate(phi, J, x);
+
+  CHECK_EQ(phi.N, P->featureTypes.N, "");
+  CHECK_EQ(phi.N, J.d0, "");
+  CHECK_EQ(x.N, J.d1, "");
+
+  double f=0.;
+  for(uint i=0; i<phi.N; i++) {
+    if(P->featureTypes.p[i]==OT_sos) f += rai::sqr(phi.p[i]);
+    else if(P->featureTypes.p[i]==OT_f) f += phi.p[i];
+    else HALT("this must be an unconstrained problem!")
+  }
+
+  if(!!g) { //gradient
+    arr coeff=zeros(phi.N);
+    for(uint i=0; i<phi.N; i++) {
+      if(P->featureTypes.p[i]==OT_sos) coeff.p[i] += 2.* phi.p[i];
+      else if(P->featureTypes.p[i]==OT_f) coeff.p[i] += 1.;
+    }
+    g = comp_At_x(J, coeff);
+    g.reshape(x.N);
+  }
+
+  if(!!H) { //hessian: Most terms are of the form   "J^T  diag(coeffs)  J"
+    arr coeff=zeros(phi.N);
+    double hasF=false;
+    for(uint i=0; i<phi.N; i++) {
+      if(P->featureTypes.p[i]==OT_sos) coeff.p[i] += 2.;
+      else if(P->featureTypes.p[i]==OT_f) hasF=true;
+    }
+    arr tmp = J;
+    if(!isSparseMatrix(tmp)) {
+      for(uint i=0; i<phi.N; i++) tmp[i] *= sqrt(coeff.p[i]);
+    } else {
+      arr sqrtCoeff = sqrt(coeff);
+      tmp.sparse().rowWiseMult(sqrtCoeff);
+    }
+    H = comp_At_A(tmp); //Gauss-Newton type!
+
+    if(hasF) { //For f-terms, the Hessian must be given explicitly, and is not \propto J^T J
+      arr fH;
+      P->getFHessian(fH, x);
+      if(fH.N) H += fH;
+    }
+
+    if(!H.special) H.reshape(x.N, x.N);
+  }
+
+  return f;
+}
+
 
 //===========================================================================
 //
 // checks and converters
 //
 
-bool checkJacobianCP(MathematicalProgram& P, const arr& x, double tolerance) {
-  VectorFunction F = [&P](arr& phi, arr& J, const arr& x) {
-    return P.evaluate(phi, J, x);
+bool checkJacobianCP(NLP& P, const arr& x, double tolerance) {
+  VectorFunction F = [&P](const arr& x) {
+    arr phi, J;
+    P.evaluate(phi, J, x);
+    phi.J() = J;
+    return phi;
   };
   return checkJacobian(F, x, tolerance);
 }
 
-bool checkHessianCP(MathematicalProgram& P, const arr& x, double tolerance) {
+bool checkHessianCP(NLP& P, const arr& x, double tolerance) {
   uint i;
   arr phi, J;
-  ObjectiveTypeA tt;
-  P.getFeatureTypes(tt);
   P.evaluate(phi, NoArr, x); //TODO: only call getStructure
-  for(i=0; i<tt.N; i++) if(tt(i)==OT_f) break;
-  if(i==tt.N) {
+  for(i=0; i<P.featureTypes.N; i++) if(P.featureTypes(i)==OT_f) break;
+  if(i==P.featureTypes.N) {
     RAI_MSG("no f-term in this KOM problem");
     return true;
   }
@@ -50,33 +101,13 @@ bool checkHessianCP(MathematicalProgram& P, const arr& x, double tolerance) {
   return checkHessian(F, x, tolerance);
 }
 
-void boundClip(arr& y, const arr& bound_lo, const arr& bound_up) {
-  if(bound_lo.N && bound_up.N) {
-    for(uint i=0; i<y.N; i++) if(bound_up.elem(i)>=bound_lo.elem(i)) {
-      if(y.elem(i)>bound_up.elem(i)) y.elem(i) = bound_up.elem(i);
-      if(y.elem(i)<bound_lo.elem(i)) y.elem(i) = bound_lo.elem(i);
-    }
-  }
-}
-
-void boundClip(MathematicalProgram& P, arr& x){
+void boundClip(NLP& P, arr& x){
   arr bounds_lo, bounds_up;
   P.getBounds(bounds_lo, bounds_up);
   boundClip(x, bounds_lo, bounds_up);
 }
 
-bool boundCheck(const arr& x, const arr& bound_lo, const arr& bound_up, double eps){
-  bool good=true;
-  if(bound_lo.N && bound_up.N) {
-    for(uint i=0; i<x.N; i++) if(bound_up.elem(i)>=bound_lo.elem(i)) {
-      if(x.elem(i) < bound_lo.elem(i)-eps){ good=false; LOG(0) <<"x(" <<i <<")=" <<x.elem(i) <<" violates lower bound " <<bound_lo.elem(i); }
-      if(x.elem(i) > bound_up.elem(i)+eps){ good=false;  LOG(0) <<"x(" <<i <<")=" <<x.elem(i) <<" violates upper bound " <<bound_up.elem(i); }
-    }
-  }
-  return good;
-}
-
-bool checkInBound(MathematicalProgram& P, const arr& x){
+bool checkInBound(NLP& P, const arr& x){
   arr bound_lo, bound_up;
   P.getBounds(bound_lo, bound_up);
   CHECK_EQ(x.N, bound_lo.N, "");
@@ -85,62 +116,27 @@ bool checkInBound(MathematicalProgram& P, const arr& x){
 }
 
 
-//===========================================================================
-//
-// optimization options
-//
-
-OptOptions::OptOptions() {
-  __globalOptOptions = this;
-  verbose    = rai::getParameter<double> ("opt/verbose", 1);
-  fmin_return=nullptr;
-  stopTolerance= rai::getParameter<double>("opt/stopTolerance", 1e-2);
-  stopFTolerance= rai::getParameter<double>("opt/stopFTolerance", 1e-1);
-  stopGTolerance= rai::getParameter<double>("opt/stopGTolerance", -1.);
-  stopEvals = rai::getParameter<double> ("opt/stopEvals", 1000);
-  stopIters = rai::getParameter<double> ("opt/stopIters", 1000);
-  stopOuters = rai::getParameter<double> ("opt/stopOuters", 1000);
-  stopLineSteps = rai::getParameter<double> ("opt/stopLineSteps", 10);
-  stopTinySteps = rai::getParameter<double> ("opt/stopTinySteps", 10);
-  initStep  = rai::getParameter<double>("opt/initStep", 1.);
-  minStep   = rai::getParameter<double>("opt/minStep", -1.);
-  maxStep   = rai::getParameter<double>("opt/maxStep", .2);
-  damping   = rai::getParameter<double>("opt/damping", 1.);
-  stepInc   = rai::getParameter<double>("opt/stepInc", 1.5);
-  stepDec   = rai::getParameter<double>("opt/stepDec", .5);
-  dampingInc= rai::getParameter<double>("opt/dampingInc", 1.);
-  dampingDec= rai::getParameter<double>("opt/dampingDec", 1.);
-  wolfe     = rai::getParameter<double>("opt/wolfe", .01);
-  nonStrictSteps = rai::getParameter<double> ("opt/nonStrictSteps", 0);
-  boundedNewton = rai::getParameter<bool> ("opt/boundedNewton", true);
-  allowOverstep = rai::getParameter<double> ("opt/allowOverstep", 0);
-  constrainedMethod = (ConstrainedMethodType)rai::getParameter<double>("opt/constrainedMethod", augmentedLag);
-  muInit = rai::getParameter<double>("opt/muInit", 1.);
-  muLBInit = rai::getParameter<double>("opt/muLBInit", 1.);
-  aulaMuInc = rai::getParameter<double>("opt/aulaMuInc", 5.);
-}
-
-void OptOptions::write(std::ostream& os) const {
-#define WRT(x) os <<#x <<" = " <<x <<endl;
-  WRT(verbose);
-//  double *fmin_return);
-  WRT(stopTolerance);
-  WRT(stopEvals);
-  WRT(stopIters);
-  WRT(initStep);
-  WRT(minStep);
-  WRT(maxStep);
-  WRT(damping);
-  WRT(stepInc);
-  WRT(stepDec);
-  WRT(dampingInc);
-  WRT(dampingDec);
-  WRT(nonStrictSteps);
-  WRT(allowOverstep);
-  WRT(constrainedMethod);
-  WRT(aulaMuInc);
-#undef WRT
-}
+//void OptOptions::write(std::ostream& os) const {
+//#define WRT(x) os <<#x <<" = " <<x <<endl;
+//  WRT(verbose);
+////  double *fmin_return);
+//  WRT(stopTolerance);
+//  WRT(stopEvals);
+//  WRT(stopIters);
+//  WRT(initStep);
+//  WRT(minStep);
+//  WRT(maxStep);
+//  WRT(damping);
+//  WRT(stepInc);
+//  WRT(stepDec);
+//  WRT(dampingInc);
+//  WRT(dampingDec);
+//  WRT(nonStrictSteps);
+//  WRT(allowOverstep);
+//  WRT(constrainedMethod);
+//  WRT(aulaMuInc);
+//#undef WRT
+//}
 
 //===========================================================================
 //
@@ -156,13 +152,14 @@ void displayFunction(const ScalarFunction& f, bool wait, double lo, double hi) {
     Y(i) = ((fx==fx && fx<10.)? fx : 10.);
   }
   Y.reshape(101, 101);
+  FILE("z.fct") <<(~Y).modRaw();
 //  plot()->Gnuplot();  plot()->Surface(Y);  plot()->update(true);
-  write(LIST<arr>(Y), "z.fct");
-  gnuplot("reset; splot [-1:1][-1:1] 'z.fct' matrix us ($1/50-1):($2/50-1):3 w l", wait, true);
+//  write(LIST<arr>(Y), "z.fct");
+  gnuplot("reset; set xlabel 'x'; set ylabel 'y'; splot [-1:1][-1:1] 'z.fct' matrix us ($1/50-1):($2/50-1):3 w l", wait, true);
 }
 
 /// minimizes \f$f(x)\f$ using its gradient only
-uint optGradDescent(arr& x, const ScalarFunction& f, OptOptions o) {
+uint optGradDescent(arr& x, const ScalarFunction& f, rai::OptOptions o) {
   uint evals=0;
   arr y, grad_x, grad_y;
   double fx, fy;
@@ -196,8 +193,8 @@ uint optGradDescent(arr& x, const ScalarFunction& f, OptOptions o) {
       if(o.verbose>1) cout <<" - reject" <<endl;
       a *= .5;
     }
-    if(evals>o.stopEvals) break; //WARNING: this may lead to non-monotonicity -> make evals high!
-    if(k>o.stopIters) break;
+    if(o.stopEvals>0 && evals>(uint)o.stopEvals) break; //WARNING: this may lead to non-monotonicity -> make evals high!
+    if(o.stopIters>0 && k>(uint)o.stopIters) break;
   }
   if(o.verbose>0) fil.close();
   if(o.verbose>1) gnuplot("plot 'z.opt' us 1:3 w l", true);

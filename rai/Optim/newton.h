@@ -8,18 +8,19 @@
 
 #pragma once
 
-#include "optimization.h"
+#include "options.h"
+#include "../Core/array.h"
 
-int optNewton(arr& x, const ScalarFunction& f, OptOptions opt=NOOPT);
+int optNewton(arr& x, const ScalarFunction& f, rai::OptOptions opt=NOOPT);
 
 struct OptNewton {
   arr& x;
   ScalarFunction f;
-  OptOptions options;
+  rai::OptOptions options;
 
   enum StopCriterion { stopNone=0, stopDeltaConverge, stopTinyFSteps, stopTinyXSteps, stopCritEvals, stopStepFailed };
 
-  OptNewton(arr& x, const ScalarFunction& f, OptOptions options=NOOPT, ostream* _logFile=0);
+  OptNewton(arr& x, const ScalarFunction& f, rai::OptOptions options=NOOPT, ostream* _logFile=0);
   ~OptNewton();
   OptNewton& setBounds(const arr& _bounds_lo, const arr& _bounds_up);
   void reinit(const arr& _x);
@@ -31,7 +32,7 @@ public:
   double fx;
   arr gx, Hx;
   double alpha, beta;
-  uint its=0, evals=0, numTinyFSteps=0, numTinyXSteps=0;
+  int its=0, evals=0, numTinyFSteps=0, numTinyXSteps=0;
   StopCriterion stopCriterion;
   arr bounds_lo, bounds_up;
   bool rootFinding=false;
