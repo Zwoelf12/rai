@@ -79,6 +79,7 @@ target_link_libraries(rai
   ann glfw GLEW glut GLU GL png qhull
   )
 
+#${CMAKE_CURRENT_SOURCE_DIR}/../../build/deps/fcl/lib/libfcl.so
 ################################################################################
 
 if(USE_BULLET)
