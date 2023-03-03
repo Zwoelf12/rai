@@ -30,6 +30,7 @@ include_directories(
   rai
   /usr/include/eigen3
   $ENV{HOME}/opt/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/deps/fcl050/include
   )
 
 # link_directories(
@@ -77,11 +78,11 @@ add_library(rai SHARED
 
 target_link_libraries(rai
   jsoncpp lapack blas pthread rt X11
-  assimp fcl
+  assimp ${CMAKE_CURRENT_SOURCE_DIR}/deps/fcl050/build/lib/libfcl.so.0.5.0
   ann glfw GLEW glut GLU GL png qhull
   )
 
-#${CMAKE_CURRENT_SOURCE_DIR}/deps/fcl050/build/lib/libfcl.so.0.5.0
+
 #/usr/lib/x86_64-linux-gnu/libfcl.so
 #${CMAKE_CURRENT_SOURCE_DIR}/../../build/deps/fcl/lib/libfcl.so
 ################################################################################
