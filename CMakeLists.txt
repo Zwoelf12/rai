@@ -24,7 +24,7 @@ add_definitions(
 
 ################################################################################
 
-add_subdirectory(deps/fcl050)# EXCLUDE_FROM_ALL)
+#add_subdirectory(deps/fcl050)# EXCLUDE_FROM_ALL)
 
 include_directories(
   rai
@@ -77,7 +77,7 @@ add_library(rai SHARED
 
 target_link_libraries(rai
   jsoncpp lapack blas pthread rt X11
-  assimp ${CMAKE_CURRENT_SOURCE_DIR}/build/deps/fcl050/lib/libfcl.so
+  assimp ${CMAKE_CURRENT_SOURCE_DIR}/deps/fcl050/build/lib/libfcl.so.0.5.0
   ann glfw GLEW glut GLU GL png qhull
   )
 
