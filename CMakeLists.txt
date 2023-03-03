@@ -31,6 +31,7 @@ include_directories(
   /usr/include/eigen3
   $ENV{HOME}/opt/include
   ${CMAKE_CURRENT_SOURCE_DIR}/deps/fcl050/include
+
   )
 
 # link_directories(

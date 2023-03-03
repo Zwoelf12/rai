@@ -15,7 +15,7 @@ extern "C" {
 #ifdef RAI_MSVC
 #  include <libqhull/qhull_a.h>
 #else
-#  include <qhull/qhull_a.h>
+#  include <libqhull/qhull_a.h>
 #endif
 }
 #undef dX
