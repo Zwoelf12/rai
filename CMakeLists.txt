@@ -24,6 +24,8 @@ add_definitions(
 
 ################################################################################
 
+add_subdirectory(deps/fcl050)# EXCLUDE_FROM_ALL)
+
 include_directories(
   rai
   /usr/include/eigen3
@@ -75,10 +77,11 @@ add_library(rai SHARED
 
 target_link_libraries(rai
   jsoncpp lapack blas pthread rt X11
-  assimp /usr/lib/x86_64-linux-gnu/libfcl.so
+  assimp ${CMAKE_CURRENT_SOURCE_DIR}/build/deps/fcl/lib/libfcl.so
   ann glfw GLEW glut GLU GL png qhull
   )
 
+#/usr/lib/x86_64-linux-gnu/libfcl.so
 #${CMAKE_CURRENT_SOURCE_DIR}/../../build/deps/fcl/lib/libfcl.so
 ################################################################################
 
