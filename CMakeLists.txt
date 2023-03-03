@@ -77,7 +77,7 @@ add_library(rai SHARED
 
 target_link_libraries(rai
   jsoncpp lapack blas pthread rt X11
-  assimp ${CMAKE_CURRENT_SOURCE_DIR}/deps/fcl050/build/lib/libfcl.so.0.5.0
+  assimp ${CMAKE_CURRENT_SOURCE_DIR}/deps/fcl050/build/lib/libfcl.so
   ann glfw GLEW glut GLU GL png qhull
   )
 
